@@ -1,0 +1,16 @@
+scenarios:
+  - id: base-case
+    canonical: true
+    description: Queue throughput follows the fixture survival table and RTO load growth adds 2.1 percent per year.
+    perturbations:
+      queue_clearance_delta: 0.00
+      annual_load_growth_pct: 2.10
+      reserve_margin_delta: 0.00
+  - id: slow-queue
+    canonical: false
+    description: Queue throughput is lower than the fixture survival table and prices sit near the high band.
+    perturbations:
+      queue_clearance_delta: -0.15
+      annual_load_growth_pct: 2.40
+      reserve_margin_delta: -0.50
+

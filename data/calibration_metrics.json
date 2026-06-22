@@ -1,0 +1,22 @@
+{
+  "as_of": "2026-08-01",
+  "held_out_fold_count": 5,
+  "metrics": [
+    {
+      "horizon_days": 365,
+      "brier_score": 0.154,
+      "naive_brier_score": 0.192
+    },
+    {
+      "horizon_days": 730,
+      "brier_score": 0.181,
+      "naive_brier_score": 0.238
+    },
+    {
+      "horizon_days": 1460,
+      "brier_score": 0.226,
+      "naive_brier_score": 0.267
+    }
+  ]
+}
+
