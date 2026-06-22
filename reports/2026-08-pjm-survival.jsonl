@@ -1,0 +1,1 @@
+{"report_id":"2026-08-pjm-survival","scenario_id":"base-case","report_md":"reports/2026-08-pjm-survival.md","fan_chart":"data/capacity_fan_chart_2027_2030.svg","brier_score_730d":0.181,"naive_brier_score_730d":0.238,"verdict":"fixture beats naive baseline; replace fixture rows with public-source ingest next"}
