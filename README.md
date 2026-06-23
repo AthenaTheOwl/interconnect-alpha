@@ -34,9 +34,8 @@ Bucket: ai-infra. Category: ai-infra. Brand prefix: `ITA`.
 
 ## Status
 
-v0 scaffold. No implementation yet. The first PR after the scaffold
-lands the PJM queue-cohort ingest and the Kaplan-Meier estimator;
-see `docs/first-pr.md`.
+
+v0.1 shipped and runs end to end. The entry command `python -m interconnect_alpha validate` runs. See `specs/0002-design/` for the v0.1 scope and `STATUS.md` (where present) for the current state and next-feature queue.
 
 ## How to run
 
