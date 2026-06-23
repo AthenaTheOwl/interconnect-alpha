@@ -64,6 +64,23 @@ megawatts to actually count on.
 
 To check the artifacts are well-formed: `python -m interconnect_alpha validate`.
 
+## live demo
+
+the same `show` result as an interactive page: ranked COD probabilities, phantom
+MW, and the calibration edge, read directly off the committed `data/*.parquet`.
+
+run locally:
+
+```
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+deploy on streamlit community cloud: new app -> repo `AthenaTheOwl/interconnect-alpha`,
+branch `main`, main file `streamlit_app.py`.
+
+<!-- live url: https://<your-app>.streamlit.app -->
+
 ## Layout
 
 ```

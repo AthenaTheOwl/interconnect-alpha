@@ -1,0 +1,4 @@
+streamlit>=1.40
+# installs the local interconnect_alpha package (pulls pandas, pyarrow, PyYAML)
+# so the app can reuse the show verb's parquet loaders.
+.
