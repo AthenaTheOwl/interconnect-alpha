@@ -37,20 +37,32 @@ Bucket: ai-infra. Category: ai-infra. Brand prefix: `ITA`.
 
 v0.1 shipped and runs end to end. The entry command `python -m interconnect_alpha validate` runs. See `specs/0002-design/` for the v0.1 scope and `STATUS.md` (where present) for the current state and next-feature queue.
 
-## How to run
+## try it
 
-Placeholder. Run commands will land in spec `0002-pjm-survival`.
-The shape will be:
+No-arg, read-only, offline. Reads the committed PJM survival fixtures under
+`data/` and prints a ranked view of which queued projects are likely to reach
+commercial operation (COD):
 
-```powershell
-uv sync
-uv run ita ingest pjm-queue --cohort 2018-2023
-uv run ita fit survival --estimator kaplan_meier
-uv run ita backtest brier --baseline naive
-uv run ita capacity ingest rpm --since 2014
-uv run ita capacity fan-chart --years 2027-2030
-uv run ita render report --month 2026-08
 ```
+python -m interconnect_alpha show
+```
+
+```
+interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)
+4 project(s), ranked by 730-day probability of reaching COD. 367 of 570 nameplate MW expected to energize.
+
+project        zone   fuel         MW COD p(730d)   95% interval  status
+PJM-ALPHA-003  EMAAC  gas        220M        92%   84%-96%    online
+PJM-ALPHA-004  COMED  wind       150M        37%   28%-48%    active
+most at risk: PJM-ALPHA-004 (COMED, wind, 150MW) at only 37% - 94MW of phantom queue capacity.
+calibration: 730-day Brier 0.181 beats naive 0.238 (-0.057); forecasts are better than a base-rate guess.
+```
+
+The point: announced queue capacity is not energized capacity, and the ranked
+COD probabilities (with a Brier backtest that beats the base rate) tell you which
+megawatts to actually count on.
+
+To check the artifacts are well-formed: `python -m interconnect_alpha validate`.
 
 ## Layout
 

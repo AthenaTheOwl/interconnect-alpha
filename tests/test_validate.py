@@ -29,3 +29,20 @@ def test_survival_parquet_has_fixture_rows():
     assert table.num_rows == 8
     assert "survival_prob" in table.column_names
 
+
+def test_show_command_prints_ranked_report(capsys):
+    exit_code = main(["show"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    # Ranked by COD probability: the gas project (92%) leads, wind (37%) trails.
+    assert "ranked by 730-day probability of reaching COD" in output
+    assert "PJM-ALPHA-003" in output
+    assert "92%" in output
+    alpha003 = output.index("PJM-ALPHA-003")
+    alpha004 = output.index("PJM-ALPHA-004")
+    assert alpha003 < alpha004
+    # Surfaces the capacity fan and the calibration edge, not raw JSON.
+    assert "capacity-price fan" in output
+    assert "beats naive" in output
+

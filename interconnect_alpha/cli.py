@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import show as show_module
 from .validation import ValidationError, project_root, validate_all
 
 
@@ -30,6 +31,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print machine-readable validation results.",
     )
+
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Print a readable, ranked view of the committed survival report.",
+    )
+    show_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Repository root. Defaults to the current installed package root.",
+    )
     return parser
 
 
@@ -54,6 +66,15 @@ def main(argv: list[str] | None = None) -> int:
                 result.detail for result in results if result.name == "canonical_scenario"
             )
             print(f"VALIDATION_OK canonical_scenario={scenario}")
+        return 0
+
+    if args.command == "show":
+        root = args.root.resolve() if args.root else project_root()
+        try:
+            print(show_module.render(root))
+        except ValidationError as exc:
+            print(f"SHOW_ERROR {exc.check}: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     parser.error(f"unknown command: {args.command}")
