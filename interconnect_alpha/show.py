@@ -83,6 +83,69 @@ def _load_calibration(root: Path) -> dict[int, dict[str, float]]:
     }
 
 
+def score_project(
+    mw: float,
+    survival_prob: float,
+    confidence_low: float | None = None,
+    confidence_high: float | None = None,
+) -> dict[str, float]:
+    """Turn a single project's survival distribution into COD economics.
+
+    This is the core transform the `show` verb applies to every queued project:
+    a survival probability at the horizon is the chance the project has NOT yet
+    energized, so the probability of reaching commercial operation (COD) is its
+    complement. From that we derive how many of the announced megawatts are
+    expected to actually energize, and how many are "phantom" queue capacity.
+
+    `confidence_low`/`confidence_high` are the survival-curve bounds; because COD
+    is the complement, the COD interval flips them (1 - high, 1 - low).
+    """
+    survival_prob = max(0.0, min(1.0, float(survival_prob)))
+    mw = max(0.0, float(mw))
+    cod_prob = 1.0 - survival_prob
+    lo = 1.0 - confidence_high if confidence_high is not None else cod_prob
+    hi = 1.0 - confidence_low if confidence_low is not None else cod_prob
+    return {
+        "cod_prob": cod_prob,
+        "lo": max(0.0, min(1.0, lo)),
+        "hi": max(0.0, min(1.0, hi)),
+        "mw": mw,
+        "expected_mw": mw * cod_prob,
+        "phantom_mw": mw * survival_prob,
+    }
+
+
+def rank_cohort(
+    survival: dict[str, dict[int, dict[str, float]]],
+    cohort: dict[str, dict[str, object]],
+    horizon: int = 730,
+) -> list[dict]:
+    """Score every project at `horizon` and rank by COD probability (desc)."""
+    rows: list[dict] = []
+    for pid, horizons in survival.items():
+        h = horizons.get(horizon)
+        if h is None:
+            continue
+        meta = cohort.get(pid, {})
+        scored = score_project(
+            float(meta.get("mw", 0.0)),
+            h["survival"],
+            h.get("low"),
+            h.get("high"),
+        )
+        rows.append(
+            {
+                "pid": pid,
+                "zone": meta.get("zone", "?"),
+                "fuel": meta.get("fuel", "?"),
+                "status": meta.get("status", "?"),
+                **scored,
+            }
+        )
+    rows.sort(key=lambda r: r["cod_prob"], reverse=True)
+    return rows
+
+
 def render(root: Path | None = None) -> str:
     """Return the human-readable report as a string."""
     resolved = (root or project_root()).resolve()
@@ -92,26 +155,7 @@ def render(root: Path | None = None) -> str:
     calib = _load_calibration(resolved)
 
     horizon = 730
-    rows = []
-    for pid, horizons in survival.items():
-        h = horizons.get(horizon)
-        if h is None:
-            continue
-        meta = cohort.get(pid, {})
-        cod_prob = 1.0 - h["survival"]
-        rows.append(
-            {
-                "pid": pid,
-                "zone": meta.get("zone", "?"),
-                "fuel": meta.get("fuel", "?"),
-                "status": meta.get("status", "?"),
-                "mw": float(meta.get("mw", 0.0)),
-                "cod_prob": cod_prob,
-                "lo": 1.0 - h["high"],
-                "hi": 1.0 - h["low"],
-            }
-        )
-    rows.sort(key=lambda r: r["cod_prob"], reverse=True)
+    rows = rank_cohort(survival, cohort, horizon)
 
     lines: list[str] = []
     lines.append("interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)")
