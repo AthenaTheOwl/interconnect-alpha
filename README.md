@@ -1,41 +1,25 @@
-# InterconnectAlpha
+# interconnect-alpha
 
-Queue-survival and capacity-curve module. Calibrated per-project
-probability-of-COD forecasts across PJM, MISO, ERCOT, CAISO, SPP.
-Probabilistic capacity-market clearing-price curves conditioned on
-queue-progression and load-growth scenarios. Shipped as the
-analytics module inside GridSilicon.
+Five hundred seventy megawatts sit in the PJM queue. Three hundred sixty-seven are
+expected to actually energize. The other 203 are a wind project in COMED at 37%, a
+battery at 48%, and the slow attrition of things that filed but never built.
+interconnect-alpha puts a survival probability on each one.
 
-## What this is
+## What it does
 
-PJM's December 2025 capacity auction made it explicit: capacity prices
-are now driven by queue throughput and data-center load, not by
-legacy fundamentals. LBNL's Queued Up 2025 dataset made queue
-snapshots accessible. No vendor produces calibrated capacity-curve
-forecasts conditioned on queue clearing. Aurora, Wood Mac, and ICF
-sell point forecasts; the differentiator is calibration.
+A queue position is not a power plant. Most projects that enter an interconnection
+queue never reach commercial operation — they stall on studies, lose their offtake,
+or get priced out by network upgrade costs. The nameplate megawatts get counted in
+forecasts anyway, because counting a queue row is easy and modeling whether it
+survives is not.
 
-InterconnectAlpha is the survival-model and capacity-curve module
-that lives inside the GridSilicon report. The first artifact is a
-PJM-only markdown report: every project in the queue with a
-Kaplan-Meier survival curve to COD, a Brier-score backtest against
-the 2018-2023 cohort, and a 2027-2030 capacity-price fan chart by
-LDA zone.
-
-Bucket: ai-infra. Category: ai-infra. Brand prefix: `ITA`.
-
-## Who this is for
-
-- Power and utility hedge funds.
-- IPP developers.
-- Hyperscaler PPA structurers.
-- Infrastructure debt funds.
-- State-PUC and FERC consultants.
-
-## Status
-
-
-v0.1 shipped and runs end to end. The entry command `python -m interconnect_alpha validate` runs. See `specs/0002-design/` for the v0.1 scope and `STATUS.md` (where present) for the current state and next-feature queue.
+interconnect-alpha fits the survival curve. It takes the PJM queue, builds a
+Kaplan-Meier probability that each project reaches COD by a given horizon, and
+backtests the forecast with a Brier score against an earlier cohort so the
+probabilities are calibrated rather than asserted. On top of the survival output it
+fits a capacity-price fan — the $/MW-day band PJM clears at, conditioned on how much
+of the queue is expected to show up. The survival math and the capacity-curve fitter
+are the point; the data adapter is small and offline by design.
 
 ## try it
 
@@ -52,21 +36,34 @@ interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)
 4 project(s), ranked by 730-day probability of reaching COD. 367 of 570 nameplate MW expected to energize.
 
 project        zone   fuel         MW COD p(730d)   95% interval  status
+------------------------------------------------------------------------
 PJM-ALPHA-003  EMAAC  gas        220M        92%   84%-96%    online
+PJM-ALPHA-001  PSEG   solar      120M        59%   50%-66%    active
+PJM-ALPHA-002  RTO    battery     80M        48%   39%-57%    active
 PJM-ALPHA-004  COMED  wind       150M        37%   28%-48%    active
+
+most likely to energize: PJM-ALPHA-003 (EMAAC, gas, 220MW) at 92% by 730d.
 most at risk: PJM-ALPHA-004 (COMED, wind, 150MW) at only 37% - 94MW of phantom queue capacity.
+
+capacity-price fan (RTO, $/MW-day):
+  2027: p10 $190  p50 $244  p90 $315
+  2028: p10 $205  p50 $268  p90 $346
+  2029: p10 $210  p50 $274  p90 $358
+  2030: p10 $198  p50 $260  p90 $340
+
 calibration: 730-day Brier 0.181 beats naive 0.238 (-0.057); forecasts are better than a base-rate guess.
 ```
 
-The point: announced queue capacity is not energized capacity, and the ranked
-COD probabilities (with a Brier backtest that beats the base rate) tell you which
-megawatts to actually count on.
+Ranked by 730-day probability of reaching COD, surest build at the top. The wind
+project in COMED is 94 megawatts of phantom queue capacity — counted in the
+nameplate, unlikely to ever clear. The Brier line is the part that keeps the rest
+honest: 0.181 against a naive 0.238 means the curve beats a base-rate guess.
 
 To check the artifacts are well-formed: `python -m interconnect_alpha validate`.
 
 ## live demo
 
-the same `show` result as an interactive page: ranked COD probabilities, phantom
+The same `show` result as an interactive page: ranked COD probabilities, phantom
 MW, and the calibration edge, read directly off the committed `data/*.parquet`.
 
 run locally:
@@ -81,46 +78,49 @@ branch `main`, main file `streamlit_app.py`.
 
 <!-- live url: https://<your-app>.streamlit.app -->
 
+## How it connects
+
+interconnect-alpha is the survival layer over the same project graph the energy
+repos share:
+
+- [grid-silicon](https://github.com/AthenaTheOwl/grid-silicon) — the data floor:
+  scores how real an announced large-load project is. interconnect-alpha is meant to
+  fold in as its analytics module once the survival math is validated standalone.
+- [ratepayer-exposure](https://github.com/AthenaTheOwl/ratepayer-exposure) — takes
+  the capacity-price fan and turns it into one household's power bill.
+- [robust-siting-lab](https://github.com/AthenaTheOwl/robust-siting-lab) — uses the
+  survival distributions as an input to robust facility-location optimization.
+
+Reports land under `reports/` here while it ships standalone; they get folded into
+grid-silicon's `reports/<year>-<month>-<iso>.md` after the merge spec ships.
+
+## Run it in full
+
+```
+python -m interconnect_alpha validate
+```
+
+`validate` (no args) checks the committed artifacts against the schema and confirms
+the survival and capacity outputs are well-formed. See `specs/0002-design/` for the
+v0.1 scope and `STATUS.md` (where present) for the current state and next-feature
+queue.
+
 ## Layout
 
 ```
 interconnect-alpha/
-  AGENTS.md
-  LICENSE
-  README.md
-  specs/
-    0001-foundation/
-      requirements.md
-      design.md
-      tasks.md
-      acceptance.md
-  docs/
-    first-pr.md
+  AGENTS.md  LICENSE  README.md
+  specs/0001-foundation/   requirements, design, tasks, acceptance
+  docs/first-pr.md
   src/
-    survival/           # kaplan_meier.py, brier_backtest.py
-    capacity/           # rpm_history_ingest.py, fan_chart.py
-    render/             # report template, plots
-  data/
-    pjm_queue_cohort_2018_2023.parquet
-  reports/              # checked-in monthly markdown
-  eval/                 # calibration_metrics.py
-  decisions/            # DEC-ITA-* architectural choices
+    survival/    kaplan_meier.py, brier_backtest.py
+    capacity/    rpm_history_ingest.py, fan_chart.py
+    render/      report template, plots
+  data/pjm_queue_cohort_2018_2023.parquet
+  reports/   checked-in monthly markdown
+  eval/      calibration_metrics.py
+  decisions/ DEC-ITA-* architectural choices
 ```
-
-## Relationship to GridSilicon
-
-InterconnectAlpha is intended to live as the analytics module inside
-the GridSilicon repo when both are stable. v0 ships as a standalone
-repo so the survival math and the capacity-curve fitter can be
-validated independently before the merge. Reports land under
-`reports/` here in v0; they get folded into GridSilicon's
-`reports/<year>-<month>-<iso>.md` after the merge spec ships.
-
-## Compounds with
-
-- GridSilicon is the parent. Long-term home of this module.
-- RatepayerExposure uses the capacity-curve outputs.
-- RobustSiting uses the survival distributions as a robust-opt input.
 
 ## License
 
