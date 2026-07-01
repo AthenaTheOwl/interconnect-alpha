@@ -14,13 +14,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .validation import project_root
+from .validation import ValidationError, project_root
+
+
+def _read_table(root: Path, relative: str):
+    """Read a parquet fixture, or fail with the same clean error `validate` gives.
+
+    A bad --root (missing directory, a file where a directory was expected, or a
+    truncated parquet) otherwise surfaces as a raw pyarrow traceback. Convert it
+    to a ValidationError so cli.py prints "SHOW_ERROR ..." and exits non-zero.
+    """
+    import pyarrow.parquet as pq
+    from pyarrow.lib import ArrowInvalid
+
+    path = root / relative
+    try:
+        return pq.read_table(path).to_pydict()
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, ArrowInvalid, OSError) as exc:
+        raise ValidationError("show", f"cannot read {relative} under {root}: {exc}") from exc
 
 
 def _load_survival(root: Path) -> dict[str, dict[int, dict[str, float]]]:
-    import pyarrow.parquet as pq
-
-    table = pq.read_table(root / "data/survival_distributions.parquet").to_pydict()
+    table = _read_table(root, "data/survival_distributions.parquet")
     out: dict[str, dict[int, dict[str, float]]] = {}
     for pid, horizon, surv, lo, hi in zip(
         table["project_id"],
@@ -38,9 +53,7 @@ def _load_survival(root: Path) -> dict[str, dict[int, dict[str, float]]]:
 
 
 def _load_cohort(root: Path) -> dict[str, dict[str, object]]:
-    import pyarrow.parquet as pq
-
-    table = pq.read_table(root / "data/pjm_queue_cohort_2018_2023.parquet").to_pydict()
+    table = _read_table(root, "data/pjm_queue_cohort_2018_2023.parquet")
     out: dict[str, dict[str, object]] = {}
     for pid, zone, fuel, status, mw in zip(
         table["project_id"],
@@ -59,9 +72,7 @@ def _load_cohort(root: Path) -> dict[str, dict[str, object]]:
 
 
 def _load_fan(root: Path) -> dict[int, dict[int, float]]:
-    import pyarrow.parquet as pq
-
-    table = pq.read_table(root / "data/capacity_fan_chart_2027_2030.parquet").to_pydict()
+    table = _read_table(root, "data/capacity_fan_chart_2027_2030.parquet")
     out: dict[int, dict[int, float]] = {}
     for year, pct, price in zip(
         table["delivery_year"], table["percentile"], table["price_mw_day"]
@@ -71,9 +82,17 @@ def _load_fan(root: Path) -> dict[int, dict[int, float]]:
 
 
 def _load_calibration(root: Path) -> dict[int, dict[str, float]]:
-    payload = json.loads(
-        (root / "data/calibration_metrics.json").read_text(encoding="utf-8")
-    )
+    path = root / "data/calibration_metrics.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, OSError) as exc:
+        raise ValidationError(
+            "show", f"cannot read data/calibration_metrics.json under {root}: {exc}"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            "show", f"data/calibration_metrics.json under {root} is not valid JSON: {exc}"
+        ) from exc
     return {
         int(row["horizon_days"]): {
             "brier": float(row["brier_score"]),
