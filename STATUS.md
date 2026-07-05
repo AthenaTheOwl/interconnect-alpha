@@ -3,19 +3,21 @@
 ## Current state
 
 - v0.1 ships a checked-in PJM report for 2026-08 with fixture parquet inputs and a deterministic SVG fan chart.
+- Survival numbers are now computed, not hand-typed: `interconnect_alpha/kaplan_meier.py` fits a right-censored Kaplan-Meier curve per fuel with Greenwood confidence bands, and `interconnect_alpha/brier_backtest.py` scores the COD forecast against the naive base-rate baseline. `scripts/build_artifacts.py` fits both over the cohort and regenerates every `data/` artifact; nothing in `survival_distributions.parquet` or `calibration_metrics.json` is a literal.
 - `python -m interconnect_alpha validate` runs with no flags and checks canonical scenario selection, report voice, parquet schemas, traceability, calibration, and required files.
 - The product brief, system map, and 0002 design ledger are present for the next implementation pass.
 
 ## Known limits
 
-- Fixture data is small and public-source shaped; it is not a full LBNL or PJM RPM ingest.
-- The capacity fan chart is deterministic scenario output, not a full Monte Carlo sampler.
-- Validation covers the v0.1 artifact contract; it does not prove production calibration on the full 2018-2023 cohort.
+- The training cohort is a small synthetic fixture (deterministic seeded draw shaped like public PJM/LBNL "Queued Up" data), not a real LBNL or PJM RPM ingest. Its fuel timescales are compressed and illustrative.
+- The Brier backtest is **in-sample**: the cohort is too small to hold out a credible earlier fold, so the same rows fit and score the curve. The reported edge measures whether conditioning on fuel type beats a single base-rate guess, not out-of-sample generalisation. `held_out_fold_count` (an unearned claim in earlier fixtures) has been removed.
+- Survival is read at horizons measured in days since queue entry; per-project rows report the fuel class's KM curve, not an individualized forward forecast.
+- The capacity fan chart is deterministic scenario output, not a full Monte Carlo sampler, and remains out of scope for the survival estimator.
 
 ## Next feature queue
 
-- Replace fixture parquet generation with a public LBNL Queued Up cohort ingest.
+- Replace the synthetic cohort with a public LBNL Queued Up ingest and relabel the Brier backtest as held-out once a real earlier fold exists.
 - Add RPM history ingest from checked public PJM auction-result files.
-- Add Kaplan-Meier fitting over the full cohort and store per-project survival rows.
+- Stratify the Kaplan-Meier fit on more than fuel (zone, vintage) once the cohort is large enough to support it.
 - Add deterministic PNG rendering once the plotting dependency is installed in the project environment.
 

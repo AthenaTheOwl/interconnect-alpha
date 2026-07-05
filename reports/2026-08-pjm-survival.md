@@ -6,18 +6,20 @@ Canonical scenario: `base-case`
 
 ## Summary
 
-- Active and recently completed fixture projects: 4.
+- Training cohort: 76 projects across four fuels, 2018-2023 queue entries (synthetic fixture).
 - Median RTO capacity-price case for 2028: $268.00/MW-day, with p10-p90 range $205.00-$346.00/MW-day.
-- Calibration gate: 730-day Brier score 0.181, naive baseline 0.238, held-out folds 5.
+- Calibration gate (in-sample): 730-day Brier score 0.141, naive baseline 0.239.
 
 ## Project Survival
 
-| project_id | PJM zone | 730-day COD probability | 95% interval | Backtest figure |
-| --- | --- | ---: | ---: | --- |
-| PJM-ALPHA-001 | PSEG | 0.59 | 0.50-0.66 | 730-day Brier 0.181 vs naive 0.238 |
-| PJM-ALPHA-002 | RTO | 0.48 | 0.39-0.57 | 730-day Brier 0.181 vs naive 0.238 |
-| PJM-ALPHA-003 | EMAAC | 0.92 | 0.84-0.96 | 730-day Brier 0.181 vs naive 0.238 |
-| PJM-ALPHA-004 | COMED | 0.37 | 0.28-0.48 | 730-day Brier 0.181 vs naive 0.238 |
+Per-fuel Kaplan-Meier survival read at the horizon, days since queue entry. COD probability is `1 - survival_prob`; the interval is the Greenwood band.
+
+| project_id | PJM zone | fuel | 730-day COD probability | 95% interval |
+| --- | --- | --- | ---: | ---: |
+| PJM-ALPHA-001 | PSEG | solar | 0.42 | 0.20-0.64 |
+| PJM-ALPHA-002 | RTO | battery | 0.16 | 0.00-0.32 |
+| PJM-ALPHA-003 | EMAAC | gas | 0.89 | 0.76-1.00 |
+| PJM-ALPHA-004 | COMED | wind | 0.11 | 0.00-0.24 |
 
 ## Capacity Price Fan
 
@@ -32,21 +34,24 @@ Plot: `data/capacity_fan_chart_2027_2030.svg`
 
 ## Calibration
 
-- Held-out fold count: 5.
-- 365-day Brier score: 0.154; naive baseline: 0.192.
-- 730-day Brier score: 0.181; naive baseline: 0.238.
-- 1460-day Brier score: 0.226; naive baseline: 0.267.
+- Evaluation: in-sample (per-fuel KM vs naive base-rate baseline).
+- 365-day Brier score: 0.049; naive baseline: 0.061; scored on 76 projects.
+- 730-day Brier score: 0.141; naive baseline: 0.239; scored on 76 projects.
+- 1460-day Brier score: 0.171; naive baseline: 0.186; scored on 65 projects.
 - Most recent recalibration run: 2026-08-01.
 
 ## Method
 
 Survival rows use the schema accepted in
-`decisions/DEC-ITA-001-survival-estimator.md`. Capacity scenarios use the
-canonical scenario rule in `decisions/DEC-ITA-002-scenario-set.md`.
+`decisions/DEC-ITA-001-survival-estimator.md`, now populated by a right-censored
+Kaplan-Meier fit (`interconnect_alpha/kaplan_meier.py`) per fuel with Greenwood
+confidence bands. The Brier backtest (`interconnect_alpha/brier_backtest.py`) scores
+the per-fuel COD forecast against the overall base rate. It is an in-sample figure:
+the fixture cohort is small, so the same rows are used to fit and to score. Capacity
+scenarios use the canonical rule in `decisions/DEC-ITA-002-scenario-set.md`.
 
-The fixture report treats `survival_prob` as probability of not reaching COD by
-the horizon. The project table reports COD probability as `1 - survival_prob`
-for the 730-day horizon.
+The report treats `survival_prob` as probability of not reaching COD by the
+horizon; the project table reports COD probability as `1 - survival_prob`.
 
 ## Inputs
 
@@ -56,4 +61,3 @@ for the 730-day horizon.
 - `data/capacity_fan_chart_2027_2030.parquet`
 - `data/calibration_metrics.json`
 - `data/scenarios.yaml`
-

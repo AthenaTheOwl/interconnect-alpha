@@ -13,13 +13,16 @@ or get priced out by network upgrade costs. The nameplate megawatts get counted 
 forecasts anyway, because counting a queue row is easy and modeling whether it
 survives is not.
 
-interconnect-alpha fits the survival curve. It takes the PJM queue, builds a
-Kaplan-Meier probability that each project reaches COD by a given horizon, and
-backtests the forecast with a Brier score against an earlier cohort so the
-probabilities are calibrated rather than asserted. On top of the survival output it
-fits a capacity-price fan — the $/MW-day band PJM clears at, conditioned on how much
-of the queue is expected to show up. The survival math and the capacity-curve fitter
-are the point; the data adapter is small and offline by design.
+interconnect-alpha fits the survival curve. It takes a PJM queue cohort, fits a
+right-censored Kaplan-Meier probability that a project reaches COD by a given
+horizon (per fuel, with Greenwood confidence bands), and backtests that forecast
+with a Brier score against the naive base-rate baseline so the probabilities are
+computed rather than asserted. The backtest here is **in-sample**: the shipped
+cohort is a small synthetic fixture, so the same rows are used to fit and to score
+(see STATUS.md). On top of the survival output it fits a capacity-price fan — the
+$/MW-day band PJM clears at, conditioned on how much of the queue is expected to
+show up. The survival math and the capacity-curve fitter are the point; the data
+adapter is small and offline by design.
 
 ## try it
 
@@ -33,17 +36,17 @@ python -m interconnect_alpha show
 
 ```
 interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)
-4 project(s), ranked by 730-day probability of reaching COD. 367 of 570 nameplate MW expected to energize.
+4 project(s), ranked by 730-day probability of reaching COD. 276 of 570 nameplate MW expected to energize.
 
 project        zone   fuel         MW COD p(730d)   95% interval  status
 ------------------------------------------------------------------------
-PJM-ALPHA-003  EMAAC  gas        220M        92%   84%-96%    online
-PJM-ALPHA-001  PSEG   solar      120M        59%   50%-66%    active
-PJM-ALPHA-002  RTO    battery     80M        48%   39%-57%    active
-PJM-ALPHA-004  COMED  wind       150M        37%   28%-48%    active
+PJM-ALPHA-003  EMAAC  gas        220M        89%   76%-100%   online
+PJM-ALPHA-001  PSEG   solar      120M        42%   20%-64%    active
+PJM-ALPHA-002  RTO    battery     80M        16%    0%-32%    active
+PJM-ALPHA-004  COMED  wind       150M        11%    0%-24%    active
 
-most likely to energize: PJM-ALPHA-003 (EMAAC, gas, 220MW) at 92% by 730d.
-most at risk: PJM-ALPHA-004 (COMED, wind, 150MW) at only 37% - 94MW of phantom queue capacity.
+most likely to energize: PJM-ALPHA-003 (EMAAC, gas, 220MW) at 89% by 730d.
+most at risk: PJM-ALPHA-004 (COMED, wind, 150MW) at only 11% - 134MW of phantom queue capacity.
 
 capacity-price fan (RTO, $/MW-day):
   2027: p10 $190  p50 $244  p90 $315
@@ -51,13 +54,17 @@ capacity-price fan (RTO, $/MW-day):
   2029: p10 $210  p50 $274  p90 $358
   2030: p10 $198  p50 $260  p90 $340
 
-calibration: 730-day Brier 0.181 beats naive 0.238 (-0.057); forecasts are better than a base-rate guess.
+calibration: 730-day Brier 0.141 beats naive 0.239 (-0.098); forecasts are better than a base-rate guess.
 ```
 
-Ranked by 730-day probability of reaching COD, surest build at the top. The wind
-project in COMED is 94 megawatts of phantom queue capacity — counted in the
-nameplate, unlikely to ever clear. The Brier line is the part that keeps the rest
-honest: 0.181 against a naive 0.238 means the curve beats a base-rate guess.
+Ranked by 730-day probability of reaching COD, surest build at the top. Each
+project's `p(730d)` is `1 - S(730)` from the right-censored Kaplan-Meier fit for
+its fuel class, and the interval is the Greenwood band; the wind project in COMED
+is 134 megawatts of phantom queue capacity — counted in the nameplate, unlikely to
+clear on that curve. The Brier line is the part that keeps the rest honest: an
+in-sample 0.141 against a naive base-rate 0.239 means conditioning the forecast on
+fuel type beats a single base-rate guess. All of these numbers are recomputed by
+`scripts/build_artifacts.py` from the cohort; none are hand-typed.
 
 To check the artifacts are well-formed: `python -m interconnect_alpha validate`.
 
@@ -112,13 +119,15 @@ interconnect-alpha/
   AGENTS.md  LICENSE  README.md
   specs/0001-foundation/   requirements, design, tasks, acceptance
   docs/first-pr.md
-  src/
-    survival/    kaplan_meier.py, brier_backtest.py
-    capacity/    rpm_history_ingest.py, fan_chart.py
-    render/      report template, plots
-  data/pjm_queue_cohort_2018_2023.parquet
+  interconnect_alpha/
+    kaplan_meier.py     right-censored KM estimator + Greenwood CIs
+    brier_backtest.py   Brier score of the KM COD forecast vs base-rate baseline
+    show.py  validation.py  cli.py   read-only report + schema checks
+  scripts/build_artifacts.py   fits KM/Brier and regenerates every data/ artifact
+  data/pjm_queue_cohort_2018_2023.parquet   training cohort (synthetic fixture)
+  data/survival_distributions.parquet       computed KM survival rows
+  data/calibration_metrics.json             computed in-sample Brier backtest
   reports/   checked-in monthly markdown
-  eval/      calibration_metrics.py
   decisions/ DEC-ITA-* architectural choices
 ```
 

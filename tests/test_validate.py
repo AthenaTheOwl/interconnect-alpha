@@ -37,10 +37,12 @@ def test_show_command_prints_ranked_report(capsys):
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    # Ranked by COD probability: the gas project (92%) leads, wind (37%) trails.
+    # Ranked by COD probability: the gas project (89%) leads, wind (11%) trails.
+    # These numbers are now COMPUTED by the per-fuel Kaplan-Meier fit in
+    # scripts/build_artifacts.py, not hand-typed; test_survival.py proves that.
     assert "ranked by 730-day probability of reaching COD" in output
     assert "PJM-ALPHA-003" in output
-    assert "92%" in output
+    assert "89%" in output
     alpha003 = output.index("PJM-ALPHA-003")
     alpha004 = output.index("PJM-ALPHA-004")
     assert alpha003 < alpha004
@@ -50,8 +52,8 @@ def test_show_command_prints_ranked_report(capsys):
     # Pin the 2027 fan prices from capacity_fan_chart_2027_2030.parquet so a
     # column swap (p10<->p90) or a shifted fixture fails here, not silently.
     assert "2027: p10 $190  p50 $244  p90 $315" in output
-    # Pin the concrete calibration numbers and the edge sign for the 730d row.
-    assert "Brier 0.181 beats naive 0.238 (-0.057)" in output
+    # Pin the concrete computed calibration numbers and the edge sign for 730d.
+    assert "Brier 0.141 beats naive 0.239 (-0.098)" in output
 
 
 def test_rank_constraints_returns_fixture_factor_scores():
