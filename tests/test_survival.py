@@ -9,6 +9,7 @@ hand-typed literals.
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -72,6 +73,23 @@ def test_km_conditional_survival_is_a_ratio():
     surv, lo, hi = curve.conditional_survival(2, 3)
     assert surv == pytest.approx(0.375)
     assert 0.0 <= lo <= surv <= hi <= 1.0
+
+
+def test_km_conditional_survival_past_last_event_is_unsupported():
+    curve = kaplan_meier([2, 3, 4, 5, 6], [1, 1, 0, 1, 0])
+    assert curve.last_event_time == 5.0
+    assert curve.supports_conditional(4.9)
+    # At or past the last event (t=5) the curve is flat for lack of events: a
+    # project that old gets no number, not S(age+h)/S(age) = 1.
+    assert not curve.supports_conditional(5)
+    assert not curve.supports_conditional(6)
+    assert all(math.isnan(v) for v in curve.conditional_survival(5, 3))
+    assert all(math.isnan(v) for v in curve.conditional_survival(6, 1))
+    # Once every subject has had the event, S(age)=0: unsupported, not 0/0.
+    all_events = kaplan_meier([1, 2, 3], [1, 1, 1])
+    assert all(math.isnan(v) for v in all_events.conditional_survival(3, 1))
+    # No events at all: nothing to condition on.
+    assert not kaplan_meier([4, 5], [0, 0]).supports_conditional(0)
 
 
 def test_km_all_events_drives_survival_to_zero_without_error():
@@ -180,9 +198,10 @@ def test_committed_survival_matches_fresh_recomputation():
     )
     assert len(merged) == len(committed) == 8
     assert list(merged["basis_c"]) == list(merged["basis_r"])
+    assert list(merged["queue_age_days_c"]) == list(merged["queue_age_days_r"])
     for col in ("survival_prob", "confidence_low", "confidence_high"):
         for c, r in zip(merged[f"{col}_c"], merged[f"{col}_r"]):
-            assert c == pytest.approx(r, abs=1e-4)
+            assert c == pytest.approx(r, abs=1e-4, nan_ok=True)
 
 
 def test_survival_rows_move_when_the_cohort_moves():
@@ -195,9 +214,12 @@ def test_survival_rows_move_when_the_cohort_moves():
         Subject(1500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
     ]
     moved = base + [Subject(300.0, 1, "gas") for _ in range(6)]
-    # PJM-ALPHA-003 is online in the shipped fixture; score it as still active
-    # here so its row reads the gas curve.
-    projects = [dict(p, actual_cod="", status="active") for p in ba.DISPLAY_PROJECTS]
+    # Score every display project as active and 31 days into the queue at the
+    # as-of date, so each row reads its fuel curve inside the observed range.
+    projects = [
+        dict(p, queue_date="2026-07-01", actual_cod="", status="active")
+        for p in ba.DISPLAY_PROJECTS
+    ]
 
     rows_base = ba.build_survival_rows(base, projects)
     rows_moved = ba.build_survival_rows(moved, projects)
@@ -216,10 +238,10 @@ def test_committed_survival_is_not_the_old_literals():
     committed = pd.read_parquet(ROOT / "data/survival_distributions.parquet")
     assert _survival_row(committed, "PJM-ALPHA-001", 730) != 0.41
     assert _survival_row(committed, "PJM-ALPHA-002", 730) != 0.52
-    # Ranking the product depends on: gas clears faster than wind.
-    gas = _survival_row(committed, "PJM-ALPHA-003", 730)
-    wind = _survival_row(committed, "PJM-ALPHA-004", 730)
-    assert (1 - gas) > (1 - wind)
+    # Ranking the product depends on: the gas curve clears faster than wind.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    curves = ba.fit_fuel_curves(ba.cohort_to_subjects(cohort.to_dict("records")))
+    assert curves["gas"].survival_at(730) < curves["wind"].survival_at(730)
 
 
 def test_online_project_counts_as_built():
@@ -235,3 +257,45 @@ def test_online_project_counts_as_built():
     assert (online["survival_prob"] == 0.0).all()
     assert (online["confidence_low"] == 0.0).all()
     assert (online["confidence_high"] == 0.0).all()
+
+
+def test_active_project_reads_the_curve_conditional_on_time_waited():
+    # Events at 100..1000 days; a project 300 days into the queue at the as-of
+    # date is scored on S(300 + h) / S(300), not on S(h) from queue entry.
+    subjects = [Subject(float(d), 1, "solar") for d in range(100, 1001, 100)]
+    subjects += [Subject(1200.0, 0, "solar")]
+    project = dict(ba.DISPLAY_PROJECTS[0], queue_date="2025-10-05")  # 300 days before as-of
+    curve = ba.fit_fuel_curves(subjects)["solar"]
+    basis, age, surv, lo, hi = ba.project_estimate(project, curve, 365)
+    assert (basis, age) == ("conditional_km", 300)
+    assert (surv, lo, hi) == curve.conditional_survival(300, 365)
+    assert surv == pytest.approx(curve.survival_at(665) / curve.survival_at(300))
+    assert surv != pytest.approx(curve.survival_at(365))
+
+
+def test_project_past_the_last_observed_cod_gets_no_estimate():
+    # The last solar COD is at day 900; a project 2,000 days in has nothing to
+    # condition on, so it gets basis flat_tail and NaN, not a 0% COD chance.
+    subjects = [Subject(float(d), 1, "solar") for d in (300, 600, 900)]
+    subjects += [Subject(2500.0, 0, "solar")]
+    project = dict(ba.DISPLAY_PROJECTS[0], queue_date="2021-02-07")  # 2,001 days before as-of
+    curve = ba.fit_fuel_curves(subjects)["solar"]
+    basis, age, surv, lo, hi = ba.project_estimate(project, curve, 730)
+    assert (basis, age) == ("flat_tail", 2001)
+    assert all(math.isnan(v) for v in (surv, lo, hi))
+
+
+def test_committed_rows_condition_on_time_waited():
+    committed = pd.read_parquet(ROOT / "data/survival_distributions.parquet")
+    by_pid = {pid: grp for pid, grp in committed.groupby("project_id")}
+    assert set(by_pid["PJM-ALPHA-003"]["basis"]) == {"observed_cod"}
+    # The three active display projects have waited 1,990-2,697 days, longer
+    # than the last COD their fuel cohort observed: no number is shipped.
+    for pid in ("PJM-ALPHA-001", "PJM-ALPHA-002", "PJM-ALPHA-004"):
+        rows = by_pid[pid]
+        assert set(rows["basis"]) == {"flat_tail"}
+        assert rows["survival_prob"].isna().all()
+    assert dict(zip(committed["project_id"], committed["queue_age_days"])) == {
+        "PJM-ALPHA-001": 2697, "PJM-ALPHA-002": 2201,
+        "PJM-ALPHA-003": 2829, "PJM-ALPHA-004": 1990,
+    }

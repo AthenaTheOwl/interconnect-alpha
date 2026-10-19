@@ -57,6 +57,7 @@ PARQUET_SCHEMAS = {
         "as_of",
         "days_to_event",
         "basis",
+        "queue_age_days",
         "survival_prob",
         "confidence_low",
         "confidence_high",

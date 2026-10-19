@@ -12,6 +12,7 @@ Read-only and offline. Defaults to the checked-in fixtures under data/.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from .validation import ValidationError, project_root
@@ -34,22 +35,32 @@ def _read_table(root: Path, relative: str):
         raise ValidationError("show", f"cannot read {relative} under {root}: {exc}") from exc
 
 
+def _number(value: object) -> float | None:
+    """A parquet float, or None for null/NaN (a flat-tail row carries no estimate)."""
+    if value is None:
+        return None
+    number = float(value)
+    return None if math.isnan(number) else number
+
+
 def _load_survival(root: Path) -> dict[str, dict[int, dict[str, object]]]:
     table = _read_table(root, "data/survival_distributions.parquet")
     out: dict[str, dict[int, dict[str, object]]] = {}
-    for pid, horizon, basis, surv, lo, hi in zip(
+    for pid, horizon, basis, age, surv, lo, hi in zip(
         table["project_id"],
         table["days_to_event"],
         table["basis"],
+        table["queue_age_days"],
         table["survival_prob"],
         table["confidence_low"],
         table["confidence_high"],
     ):
         out.setdefault(str(pid), {})[int(horizon)] = {
             "basis": str(basis),
-            "survival": float(surv),
-            "low": float(lo),
-            "high": float(hi),
+            "age_days": int(age),
+            "survival": _number(surv),
+            "low": _number(lo),
+            "high": _number(hi),
         }
     return out
 
@@ -143,9 +154,12 @@ def rank_cohort(
 ) -> list[dict]:
     """Score every project at `horizon` and rank by COD probability (desc).
 
-    Each row carries the survival row's `basis`. `observed_cod` rows reached COD
-    by the as-of date: survival 0, so COD probability 1 and the full MW count as
-    built.
+    `horizon` counts days after the as-of date. Each row carries the survival
+    row's `basis` and `age_days` (days already in the queue). `observed_cod` rows
+    reached COD by the as-of date: survival 0, so COD probability 1 and the full
+    MW count as built. `conditional_km` rows read the fuel curve conditional on
+    `age_days`. `flat_tail` rows have no survival number, so `cod_prob`, the
+    interval, `expected_mw` and `phantom_mw` are None; they rank last.
     """
     rows: list[dict] = []
     for pid, horizons in survival.items():
@@ -153,12 +167,18 @@ def rank_cohort(
         if h is None:
             continue
         meta = cohort.get(pid, {})
-        scored = score_project(
-            float(meta.get("mw", 0.0)),
-            h["survival"],
-            h.get("low"),
-            h.get("high"),
-        )
+        mw = float(meta.get("mw", 0.0))
+        if h.get("survival") is None:
+            scored = {
+                "cod_prob": None,
+                "lo": None,
+                "hi": None,
+                "mw": max(0.0, mw),
+                "expected_mw": None,
+                "phantom_mw": None,
+            }
+        else:
+            scored = score_project(mw, h["survival"], h.get("low"), h.get("high"))
         rows.append(
             {
                 "pid": pid,
@@ -166,27 +186,33 @@ def rank_cohort(
                 "fuel": meta.get("fuel", "?"),
                 "status": meta.get("status", "?"),
                 "basis": h.get("basis", "?"),
+                "age_days": h.get("age_days"),
                 **scored,
             }
         )
-    rows.sort(key=lambda r: r["cod_prob"], reverse=True)
+    rows.sort(key=lambda r: -1.0 if r["cod_prob"] is None else r["cod_prob"], reverse=True)
     return rows
 
 
 def summarize(rows: list[dict]) -> dict[str, float]:
-    """MW totals over ranked rows: nameplate, already online, expected, phantom.
+    """MW totals over ranked rows.
 
-    `expected_mw` counts online projects at full MW plus each forecast project's
-    MW weighted by its COD probability; `phantom_mw` is the forecast remainder.
+    `online_mw` is built capacity. `scored_mw` is the COD-weighted MW of active
+    projects with a supported estimate and `phantom_mw` their remainder;
+    `expected_mw` is the two together. `unsupported_mw` is nameplate in flat-tail
+    rows, counted in neither expected nor phantom.
     """
     online = [r for r in rows if r["basis"] == "observed_cod"]
-    forecast = [r for r in rows if r["basis"] != "observed_cod"]
+    scored = [r for r in rows if r["basis"] != "observed_cod" and r["cod_prob"] is not None]
     online_mw = sum(r["mw"] for r in online)
+    scored_mw = sum(r["expected_mw"] for r in scored)
     return {
         "nameplate_mw": sum(r["mw"] for r in rows),
         "online_mw": online_mw,
-        "expected_mw": online_mw + sum(r["expected_mw"] for r in forecast),
-        "phantom_mw": sum(r["phantom_mw"] for r in forecast),
+        "scored_mw": scored_mw,
+        "expected_mw": online_mw + scored_mw,
+        "phantom_mw": sum(r["phantom_mw"] for r in scored),
+        "unsupported_mw": sum(r["mw"] for r in rows if r["cod_prob"] is None),
     }
 
 
@@ -205,9 +231,13 @@ def render(root: Path | None = None) -> str:
     lines.append("interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)")
     totals = summarize(rows)
     lines.append(
-        f"{len(rows)} project(s), ranked by 730-day probability of reaching COD. "
-        f"{totals['expected_mw']:.0f} of {totals['nameplate_mw']:.0f} nameplate MW expected "
-        f"to energize, {totals['online_mw']:.0f} of them already online.\n"
+        f"{len(rows)} project(s), ranked by probability of reaching COD within 730 days of the "
+        f"as-of date, given days already in the queue."
+    )
+    lines.append(
+        f"of {totals['nameplate_mw']:.0f} nameplate MW: {totals['online_mw']:.0f} already online, "
+        f"{totals['scored_mw']:.0f} expected from scored active projects, "
+        f"{totals['unsupported_mw']:.0f} with no supported estimate.\n"
     )
 
     header = (
@@ -217,18 +247,20 @@ def render(root: Path | None = None) -> str:
     lines.append(header)
     lines.append("-" * len(header))
     for r in rows:
-        if r["basis"] == "observed_cod":
-            interval = f"{'observed':>9}  "
+        if r["cod_prob"] is None:
+            prob, interval = f"{'n/a':>10}", f"{'flat tail':>9}  "
+        elif r["basis"] == "observed_cod":
+            prob, interval = f"{r['cod_prob']:>10.0%}", f"{'observed':>9}  "
         else:
-            interval = f"{r['lo']:>5.0%}-{r['hi']:<5.0%}"
+            prob, interval = f"{r['cod_prob']:>10.0%}", f"{r['lo']:>5.0%}-{r['hi']:<5.0%}"
         lines.append(
             f"{r['pid']:<14} {r['zone']:<6} {r['fuel']:<8} {r['mw']:>5.0f}M "
-            f"{r['cod_prob']:>10.0%} "
-            f"{interval}  {r['status']}"
+            f"{prob} {interval}  {r['status']}"
         )
 
-    # Best and worst are forecasts; a project already online is neither.
-    forecast = [r for r in rows if r["basis"] != "observed_cod"]
+    # Best and worst are scored forecasts; a project already online is neither,
+    # and a flat-tail project has no number to rank.
+    forecast = [r for r in rows if r["basis"] != "observed_cod" and r["cod_prob"] is not None]
     if forecast:
         lines.append("")
         best = forecast[0]
@@ -241,6 +273,15 @@ def render(root: Path | None = None) -> str:
             f"most at risk: {worst['pid']} ({worst['zone']}, {worst['fuel']}, "
             f"{worst['mw']:.0f}MW) at only {worst['cod_prob']:.0%} - "
             f"{worst['phantom_mw']:.0f}MW of phantom queue capacity."
+        )
+    unsupported = [r for r in rows if r["cod_prob"] is None]
+    if unsupported:
+        names = ", ".join(f"{r['pid']} ({r['age_days']}d in queue)" for r in unsupported)
+        lines.append("")
+        lines.append(f"no supported estimate: {names}.")
+        lines.append(
+            "each is older than the last COD its fuel cohort observed; past that age the "
+            "Kaplan-Meier curve is flat for lack of events."
         )
 
     lines.append("")
@@ -258,6 +299,7 @@ def render(root: Path | None = None) -> str:
         lines.append("")
         lines.append(
             f"calibration (in-sample): 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
-            f"(-{edge:.3f}); forecasts are better than a base-rate guess."
+            f"(-{edge:.3f}) for the per-fuel curve from queue entry; forecasts are better than "
+            f"a base-rate guess."
         )
     return "\n".join(lines)

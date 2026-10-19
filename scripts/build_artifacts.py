@@ -12,8 +12,10 @@ Pipeline:
    public PJM/LBNL "Queued Up" data, not a real ingest. The four named display
    projects (PJM-ALPHA-001..004) are pinned; the rest fill out per-fuel strata so
    Kaplan-Meier has enough events and censoring to fit.
-2. Fit a right-censored Kaplan-Meier curve per fuel and read S(t) with Greenwood
-   confidence bands at the display horizons -> ``data/survival_distributions.parquet``.
+2. Fit a right-censored Kaplan-Meier curve per fuel. Score each display project at
+   the as-of date: built if it already reached COD, else the curve conditional on
+   days already in the queue (Greenwood band), or no estimate past the last COD its
+   fuel cohort observed -> ``data/survival_distributions.parquet``.
 3. Backtest the per-fuel COD forecast against the naive base rate (in-sample) ->
    ``data/calibration_metrics.json``.
 4. Rewrite the monthly report (``reports/2026-08-pjm-survival.md`` + ``.jsonl``) and
@@ -24,6 +26,7 @@ Pipeline:
 from __future__ import annotations
 
 import json
+import math
 import random
 import sys
 from dataclasses import dataclass
@@ -174,18 +177,28 @@ def fit_fuel_curves(subjects: list[Subject]):
     }
 
 
-def project_estimate(project: dict, curve, horizon: int) -> tuple[str, float, float, float]:
-    """``(basis, survival_prob, confidence_low, confidence_high)`` for one project.
+def project_estimate(project: dict, curve, horizon: int) -> tuple[str, int, float, float, float]:
+    """``(basis, queue_age_days, survival_prob, confidence_low, confidence_high)``.
 
-    A project that reached COD on or before the as-of date is built: survival is
-    0 with no band (basis ``observed_cod``). Its fuel curve is not consulted.
-    Everything else reads its fuel's KM curve at the horizon (``km_from_entry``).
+    ``horizon`` counts days after the as-of date and ``queue_age_days`` is how long
+    the project has already waited at the as-of date. Three cases:
+
+    - ``observed_cod``: COD on or before the as-of date. The project is built:
+      survival 0 with no band, and the fuel curve is not consulted.
+    - ``conditional_km``: still active, and its fuel cohort holds a COD after this
+      age. Survival is ``S(age + horizon) / S(age)`` with the Greenwood band over
+      ``(age, age + horizon]``.
+    - ``flat_tail``: still active but older than the last COD its fuel cohort
+      observed. The curve is flat there for lack of events, so there is no
+      estimate: survival and band are NaN.
     """
+    age = _days(_iso(AS_OF), project["queue_date"])
     if project["actual_cod"] and date.fromisoformat(project["actual_cod"]) <= AS_OF:
-        return ("observed_cod", 0.0, 0.0, 0.0)
-    surv = curve.survival_at(horizon)
-    lo, hi = curve.ci_at(horizon)
-    return ("km_from_entry", surv, lo, hi)
+        return ("observed_cod", age, 0.0, 0.0, 0.0)
+    if not curve.supports_conditional(age):
+        return ("flat_tail", age, math.nan, math.nan, math.nan)
+    surv, lo, hi = curve.conditional_survival(age, horizon)
+    return ("conditional_km", age, surv, lo, hi)
 
 
 def build_survival_rows(
@@ -197,15 +210,15 @@ def build_survival_rows(
     for proj in projects:
         curve = curves[proj["fuel"]]
         for h in DISPLAY_HORIZONS:
-            basis, surv, lo, hi = project_estimate(proj, curve, h)
+            basis, age, surv, lo, hi = project_estimate(proj, curve, h)
             records.append(
-                [proj["project_id"], as_of, h, basis,
+                [proj["project_id"], as_of, h, basis, age,
                  round(surv, 4), round(lo, 4), round(hi, 4)]
             )
     return pd.DataFrame(
         records,
         columns=[
-            "project_id", "as_of", "days_to_event", "basis",
+            "project_id", "as_of", "days_to_event", "basis", "queue_age_days",
             "survival_prob", "confidence_low", "confidence_high",
         ],
     )
@@ -320,47 +333,103 @@ def _cod(survival_prob: float) -> float:
     return 1.0 - survival_prob
 
 
-def write_report(root: Path, survival: pd.DataFrame, calib: Calibration, cohort_n: int) -> None:
+def write_report(
+    root: Path, survival: pd.DataFrame, calib: Calibration, cohort_rows: list[dict], curves: dict
+) -> None:
     by_project = {
         pid: {
-            int(h): (basis, sp, lo, hi)
-            for _, h, basis, sp, lo, hi in grp.itertuples(index=False)
+            int(h): (basis, int(age), sp, lo, hi)
+            for _, h, basis, age, sp, lo, hi in grp.itertuples(index=False)
         }
         for pid, grp in (
-            survival[["project_id", "days_to_event", "basis", "survival_prob",
+            survival[["project_id", "days_to_event", "basis", "queue_age_days", "survival_prob",
                       "confidence_low", "confidence_high"]].groupby("project_id")
         )
     }
     order = [p["project_id"] for p in DISPLAY_PROJECTS]
     zones = {p["project_id"]: p["zone"] for p in DISPLAY_PROJECTS}
+    fuels = {p["project_id"]: p["fuel"] for p in DISPLAY_PROJECTS}
+    mws = {p["project_id"]: p["capacity_mw"] for p in DISPLAY_PROJECTS}
 
     m730 = next(m for m in calib.payload["metrics"] if m["horizon_days"] == 730)
+
+    rows_730 = {pid: by_project[pid][730] for pid in order}
+    online_mw = sum(mws[pid] for pid, r in rows_730.items() if r[0] == "observed_cod")
+    scored = [pid for pid, r in rows_730.items() if r[0] == "conditional_km"]
+    scored_mw = sum(mws[pid] * _cod(rows_730[pid][2]) for pid in scored)
+    flat_mw = sum(mws[pid] for pid, r in rows_730.items() if r[0] == "flat_tail")
+    if scored:
+        scored_txt = (
+            f"{scored_mw:.0f} MW expected within 730 days from the {len(scored)} active "
+            f"project(s) with a supported estimate"
+        )
+    else:
+        scored_txt = "no active project has a supported estimate"
 
     lines: list[str] = []
     lines.append("# PJM Queue Survival Report - 2026-08\n")
     lines.append("As of: 2026-08-01\n")
     lines.append("Canonical scenario: `base-case`\n")
     lines.append("## Summary\n")
-    lines.append(f"- Training cohort: {cohort_n} projects across four fuels, 2018-2023 queue entries (synthetic fixture).")
+    lines.append(f"- Training cohort: {len(cohort_rows)} projects across four fuels, 2018-2023 queue entries (synthetic fixture).")
+    lines.append(
+        f"- Display projects: {sum(mws.values()):.0f} nameplate MW. {online_mw:.0f} MW already online; "
+        f"{scored_txt}; {flat_mw:.0f} MW sit in active projects past their fuel cohort's last "
+        f"observed COD, with no estimate."
+    )
     lines.append("- Median RTO capacity-price case for 2028: $268.00/MW-day, with p10-p90 range $205.00-$346.00/MW-day.")
     lines.append(
         f"- Calibration gate (in-sample): 730-day Brier score {m730['brier_score']:.3f}, "
         f"naive baseline {m730['naive_brier_score']:.3f}.\n"
     )
     lines.append("## Project Survival\n")
-    lines.append("Per-fuel Kaplan-Meier survival read at the horizon, days since queue entry. "
-                 "COD probability is `1 - survival_prob`; the interval is the Greenwood band. "
-                 "A project that reached COD by the as-of date counts as built "
-                 "(basis `observed_cod`): probability 1, no band, no curve.\n")
-    lines.append("| project_id | PJM zone | fuel | basis | 730-day COD probability | 95% interval |")
-    lines.append("| --- | --- | --- | --- | ---: | ---: |")
+    lines.append(
+        "Each active project reads its fuel's Kaplan-Meier curve conditional on the days it has "
+        "already spent in the queue at the as-of date: `S(age + h) / S(age)`, with the Greenwood "
+        "band over `(age, age + h]`. The horizon `h` counts days after the as-of date. COD "
+        "probability is `1 - survival_prob`. A project that reached COD by the as-of date counts "
+        "as built (basis `observed_cod`): probability 1, no band, no curve. An active project "
+        "older than the last COD its fuel cohort observed sits on the flat tail of the curve, "
+        "where there are no events to condition on (basis `flat_tail`): no estimate.\n"
+    )
+    lines.append(
+        "| project_id | PJM zone | fuel | days in queue | basis | "
+        "730-day COD probability | 95% interval |"
+    )
+    lines.append("| --- | --- | --- | ---: | --- | ---: | ---: |")
     for pid in order:
-        basis, sp, lo, hi = by_project[pid][730]
-        interval = "observed" if basis == "observed_cod" else f"{_cod(hi):.2f}-{_cod(lo):.2f}"
+        basis, age, sp, lo, hi = rows_730[pid]
+        if basis == "observed_cod":
+            prob, interval = f"{_cod(sp):.2f}", "observed"
+        elif basis == "flat_tail":
+            prob, interval = "n/a", "n/a"
+        else:
+            prob, interval = f"{_cod(sp):.2f}", f"{_cod(hi):.2f}-{_cod(lo):.2f}"
         lines.append(
-            f"| {pid} | {zones[pid]} | "
-            f"{next(p['fuel'] for p in DISPLAY_PROJECTS if p['project_id']==pid)} | "
-            f"{basis} | {_cod(sp):.2f} | {interval} |"
+            f"| {pid} | {zones[pid]} | {fuels[pid]} | {age} | {basis} | {prob} | {interval} |"
+        )
+    lines.append("")
+    lines.append("### Fuel curves\n")
+    lines.append(
+        "The per-fuel curves the rows above are read from, measured from queue entry. "
+        "Withdrawn projects are right-censored at their withdrawal date "
+        "(see `docs/withdrawal-and-censoring.md`). The 730-day column is the forecast the "
+        "Brier backtest scores.\n"
+    )
+    lines.append(
+        "| fuel | projects | reached COD | withdrawn | last observed COD (days from entry) | "
+        "730-day COD probability from entry |"
+    )
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for fuel in sorted(curves):
+        curve = curves[fuel]
+        withdrawn = sum(
+            1 for r in cohort_rows if r["fuel"] == fuel and r["status"] == "withdrawn"
+        )
+        last = curve.last_event_time
+        lines.append(
+            f"| {fuel} | {curve.n_total} | {curve.n_events} | {withdrawn} | "
+            f"{'n/a' if last is None else f'{last:.0f}'} | {_cod(curve.survival_at(730)):.2f} |"
         )
     lines.append("")
     lines.append("## Capacity Price Fan\n")
@@ -383,16 +452,18 @@ def write_report(root: Path, survival: pd.DataFrame, calib: Calibration, cohort_
     lines.append("## Method\n")
     lines.append(
         "Survival rows use the schema accepted in\n"
-        "`decisions/DEC-ITA-001-survival-estimator.md`, now populated by a right-censored\n"
-        "Kaplan-Meier fit (`interconnect_alpha/kaplan_meier.py`) per fuel with Greenwood\n"
-        "confidence bands. The Brier backtest (`interconnect_alpha/brier_backtest.py`) scores\n"
-        "the per-fuel COD forecast against the overall base rate. It is an in-sample figure:\n"
+        "`decisions/DEC-ITA-001-survival-estimator.md` plus its `basis` and `queue_age_days`\n"
+        "columns, populated by a right-censored Kaplan-Meier fit\n"
+        "(`interconnect_alpha/kaplan_meier.py`) per fuel with Greenwood confidence bands. The\n"
+        "Brier backtest (`interconnect_alpha/brier_backtest.py`) scores the per-fuel COD\n"
+        "forecast from queue entry against the overall base rate. It is an in-sample figure:\n"
         "the fixture cohort is small, so the same rows are used to fit and to score. Capacity\n"
         "scenarios use the canonical rule in `decisions/DEC-ITA-002-scenario-set.md`.\n"
     )
     lines.append(
-        "The report treats `survival_prob` as probability of not reaching COD by the\n"
-        "horizon; the project table reports COD probability as `1 - survival_prob`.\n"
+        "The report treats `survival_prob` as probability of not reaching COD within\n"
+        "`days_to_event` days after the as-of date; the project table reports COD probability\n"
+        "as `1 - survival_prob`.\n"
     )
     lines.append("## Inputs\n")
     for rel in [
@@ -451,7 +522,7 @@ def build(root: Path) -> dict:
 
     write_capacity_fixtures(data_dir)
     write_svg(root)
-    write_report(root, survival_df, calib, len(cohort_rows))
+    write_report(root, survival_df, calib, cohort_rows, fit_fuel_curves(subjects))
 
     return {"cohort": len(cohort_rows), "subjects": len(subjects), "calibration": calib.payload}
 

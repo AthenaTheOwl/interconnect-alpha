@@ -78,6 +78,22 @@ class KMCurve:
         g = self.greenwood_at(t)
         return _linear_band(s, g, self.z)
 
+    @property
+    def last_event_time(self) -> float | None:
+        """Largest observed event time, or None when the sample has no events."""
+        return self.points[-1].time if self.points else None
+
+    def supports_conditional(self, age: float) -> bool:
+        """True when the fit holds at least one event after ``age``.
+
+        Past the last observed event the product-limit curve is flat by
+        construction, so S(age+h)/S(age) would read 1 for every horizon (or 0/0
+        once S has reached 0). That figure reflects the absence of events, not
+        evidence about subjects that old: the flat-tail limit.
+        """
+        last = self.last_event_time
+        return last is not None and age < last
+
     def conditional_survival(self, age: float, horizon: float) -> tuple[float, float, float]:
         """Conditional survival S(age+horizon)/S(age) with a Greenwood band.
 
@@ -86,10 +102,14 @@ class KMCurve:
         the Greenwood increments over the interval ``(age, age+horizon]`` only,
         which is the standard left-truncated conditional-KM result. Returned as
         ``(survival, ci_low, ci_high)``.
+
+        Past the flat-tail limit (no event after ``age``; see
+        ``supports_conditional``) the data say nothing, so all three values are
+        NaN rather than a number the fit cannot back.
         """
-        s_age = self.survival_at(age)
-        if s_age <= 0.0:
-            return (0.0, 0.0, 0.0)
+        if not self.supports_conditional(age):
+            return (math.nan, math.nan, math.nan)
+        s_age = self.survival_at(age)  # > 0: an event after age means S has not hit 0
         s_cond = self.survival_at(age + horizon) / s_age
         g_cond = max(0.0, self.greenwood_at(age + horizon) - self.greenwood_at(age))
         lo, hi = _linear_band(s_cond, g_cond, self.z)

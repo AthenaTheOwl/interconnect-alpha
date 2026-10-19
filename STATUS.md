@@ -11,7 +11,7 @@
 
 - The training cohort is a small synthetic fixture (deterministic seeded draw shaped like public PJM/LBNL "Queued Up" data), not a real LBNL or PJM RPM ingest. Its fuel timescales are compressed and illustrative.
 - The Brier backtest is **in-sample**: the cohort is too small to hold out a credible earlier fold, so the same rows fit and score the curve. The reported edge measures whether conditioning on fuel type beats a single base-rate guess, not out-of-sample generalisation. `held_out_fold_count` (an unearned claim in earlier fixtures) has been removed.
-- Survival is read at horizons measured in days since queue entry; per-project rows report the fuel class's KM curve, not an individualized forward forecast.
+- Per-project rows condition the fuel class's KM curve on days already spent in the queue, and the horizon counts days after the as-of date. Fuel is the only stratum. A project that reached COD by the as-of date counts as built. A project older than the last COD its fuel cohort observed gets no estimate (`flat_tail`): in the shipped fixture that is all three active display projects, because the cohort's timescales are compressed and its last solar, battery and wind CODs land years short of those projects' ages (see the fuel-curve table in the report).
 - The capacity fan chart is deterministic scenario output, not a full Monte Carlo sampler, and remains out of scope for the survival estimator.
 
 ## Next feature queue

@@ -28,6 +28,7 @@ from interconnect_alpha.show import (  # noqa: E402
     _load_survival,
     rank_cohort,
     score_project,
+    summarize,
 )
 
 HORIZON = 730
@@ -54,22 +55,24 @@ def build_rows() -> tuple[list[dict], dict]:
             "fuel": r["fuel"],
             "status": r["status"],
             "basis": r["basis"],
+            "age_days": r["age_days"],
             "MW": r["mw"],
-            "cod_prob": r["cod_prob"],
+            "cod_prob": r["cod_prob"],  # None on the flat tail: no supported estimate
             "lo": r["lo"],
             "hi": r["hi"],
             "phantom_MW": r["phantom_mw"],
         }
         for r in ranked
     ]
-    return rows, {"fan": fan, "calib": calib}
+    return rows, {"fan": fan, "calib": calib, "totals": summarize(ranked)}
 
 
 st.set_page_config(page_title="interconnect-alpha — PJM queue survival", layout="wide")
 st.title("interconnect-alpha")
 st.caption(
-    "which queued PJM projects are likely to reach commercial operation (COD) by "
-    "730 days — and which megawatts are phantom queue capacity unlikely to energize."
+    "which queued PJM projects are likely to reach commercial operation (COD) within "
+    "730 days of the as-of date, given time already in the queue — and which megawatts "
+    "are phantom queue capacity unlikely to energize."
 )
 
 try:
@@ -84,31 +87,52 @@ if not rows:
 
 fan = extra["fan"]
 calib = extra["calib"]
-
-nameplate_mw = sum(r["MW"] for r in rows)
-expected_mw = sum(r["MW"] * r["cod_prob"] for r in rows)
-phantom_mw = nameplate_mw - expected_mw
+totals = extra["totals"]
+scored = [r for r in rows if r["basis"] != "observed_cod" and r["cod_prob"] is not None]
+unsupported = [r for r in rows if r["cod_prob"] is None]
 
 st.subheader("PJM queue survival — as-of 2026-08-01 (base-case)")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("nameplate", f"{nameplate_mw:,.0f} MW", help="announced queue capacity")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("nameplate", f"{totals['nameplate_mw']:,.0f} MW", help="announced queue capacity")
 c2.metric(
-    "expected to energize",
-    f"{expected_mw:,.0f} MW",
-    help="sum of MW weighted by 730-day COD probability",
+    "online or expected to energize",
+    f"{totals['expected_mw']:,.0f} MW",
+    help=(
+        f"{totals['online_mw']:,.0f} MW already online, plus scored active projects' MW "
+        "weighted by 730-day COD probability"
+    ),
 )
 c3.metric(
     "phantom",
-    f"{phantom_mw:,.0f} MW",
-    help="nameplate minus expected — capacity unlikely to reach COD",
+    f"{totals['phantom_mw']:,.0f} MW",
+    help="scored active MW unlikely to reach COD within 730 days",
+)
+c4.metric(
+    "no supported estimate",
+    f"{totals['unsupported_mw']:,.0f} MW",
+    help="active projects older than the last COD their fuel cohort observed",
 )
 
-# One interactive control: filter by minimum 730-day COD probability.
+# One interactive control: filter by minimum 730-day COD probability. Rows with
+# no supported estimate only show when the filter is off.
 min_prob = st.slider(
     "minimum 730-day COD probability", 0, 100, 0, format="%d%%"
 ) / 100.0
-shown = [r for r in rows if r["cod_prob"] >= min_prob]
+shown = [
+    r for r in rows
+    if (r["cod_prob"] is None and min_prob == 0)
+    or (r["cod_prob"] is not None and r["cod_prob"] >= min_prob)
+]
+
+
+def _interval(r: dict) -> str:
+    if r["cod_prob"] is None:
+        return "flat tail"
+    if r["basis"] == "observed_cod":
+        return "observed"
+    return f"{r['lo']:.0%}-{r['hi']:.0%}"
+
 
 st.dataframe(
     [
@@ -117,11 +141,10 @@ st.dataframe(
             "zone": r["zone"],
             "fuel": r["fuel"],
             "MW": round(r["MW"]),
-            "COD p(730d)": f"{r['cod_prob']:.0%}",
-            "95% interval": (
-                "observed" if r["basis"] == "observed_cod" else f"{r['lo']:.0%}-{r['hi']:.0%}"
-            ),
-            "phantom MW": round(r["phantom_MW"]),
+            "days in queue": r["age_days"],
+            "COD p(730d)": "n/a" if r["cod_prob"] is None else f"{r['cod_prob']:.0%}",
+            "95% interval": _interval(r),
+            "phantom MW": None if r["phantom_MW"] is None else round(r["phantom_MW"]),
             "status": r["status"],
         }
         for r in shown
@@ -130,20 +153,28 @@ st.dataframe(
     hide_index=True,
 )
 
-# Key finding callout: the most at-risk project (largest phantom capacity).
-worst = max(rows, key=lambda r: r["phantom_MW"])
-st.info(
-    f"**most at risk:** {worst['project']} ({worst['zone']}, {worst['fuel']}, "
-    f"{worst['MW']:.0f}MW) at only {worst['cod_prob']:.0%} by 730d — "
-    f"{worst['phantom_MW']:.0f}MW of phantom queue capacity."
-)
+# Key finding callout: the most at-risk scored project (largest phantom capacity).
+if scored:
+    worst = max(scored, key=lambda r: r["phantom_MW"])
+    st.info(
+        f"**most at risk:** {worst['project']} ({worst['zone']}, {worst['fuel']}, "
+        f"{worst['MW']:.0f}MW) at only {worst['cod_prob']:.0%} by 730d — "
+        f"{worst['phantom_MW']:.0f}MW of phantom queue capacity."
+    )
+if unsupported:
+    names = ", ".join(f"{r['project']} ({r['age_days']}d in queue)" for r in unsupported)
+    st.info(
+        f"**no supported estimate:** {names}. each is older than the last COD its fuel "
+        "cohort observed; past that age the Kaplan-Meier curve is flat for lack of events."
+    )
 
 c = calib.get(HORIZON)
 if c:
     edge = c["naive"] - c["brier"]
     st.success(
         f"**calibration (in-sample):** 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
-        f"(-{edge:.3f}); forecasts are better than a base-rate guess."
+        f"(-{edge:.3f}) for the per-fuel curve from queue entry; forecasts are better than "
+        "a base-rate guess."
     )
 
 with st.expander("capacity-price fan (RTO, $/MW-day)"):
@@ -174,20 +205,25 @@ st.caption(
     "drive the actual survival engine — `interconnect_alpha.show.score_project` — "
     "with your own inputs. a low survival probability means the project is unlikely "
     "to still be un-energized at 730 days, so its COD probability (the complement) "
-    "is high. pick a committed project to pre-fill, then edit."
+    "is high. pick a committed project to pre-fill, then edit. projects with no "
+    "supported estimate have no survival number to pre-fill and are left out."
 )
 
-projects_by_id = {r["project"]: r for r in rows}
-preset_id = st.selectbox(
-    "start from a committed project",
-    list(projects_by_id),
-    help="pre-fills the sliders with that project's announced MW and survival curve.",
-)
-preset = projects_by_id[preset_id]
-preset_survival = 1.0 - preset["cod_prob"]
-# preset["lo"]/["hi"] are COD bounds; the survival bounds are their complements.
-preset_surv_lo = round(1.0 - preset["hi"], 2)
-preset_surv_hi = round(1.0 - preset["lo"], 2)
+projects_by_id = {r["project"]: r for r in rows if r["cod_prob"] is not None}
+if projects_by_id:
+    preset_id = st.selectbox(
+        "start from a committed project",
+        list(projects_by_id),
+        help="pre-fills the sliders with that project's announced MW and survival curve.",
+    )
+    preset = projects_by_id[preset_id]
+    preset_mw = preset["MW"]
+    preset_survival = 1.0 - preset["cod_prob"]
+    # preset["lo"]/["hi"] are COD bounds; the survival bounds are their complements.
+    preset_surv_lo = round(1.0 - preset["hi"], 2)
+    preset_surv_hi = round(1.0 - preset["lo"], 2)
+else:
+    preset_mw, preset_survival, preset_surv_lo, preset_surv_hi = 100.0, 0.5, 0.5, 0.5
 
 ic1, ic2 = st.columns(2)
 with ic1:
@@ -195,7 +231,7 @@ with ic1:
         "announced capacity (MW)",
         0.0,
         2000.0,
-        float(round(preset["MW"])),
+        float(round(preset_mw)),
         step=10.0,
     )
     in_survival = st.slider(
