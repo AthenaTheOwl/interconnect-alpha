@@ -1,9 +1,11 @@
 # interconnect-alpha
 
-Five hundred seventy megawatts sit in the PJM queue. Three hundred sixty-seven are
-expected to actually energize. The other 203 are a wind project in COMED at 37%, a
-battery at 48%, and the slow attrition of things that filed but never built.
-interconnect-alpha puts a survival probability on each one.
+Five hundred seventy megawatts sit in the PJM queue. Two hundred seventy-six are
+expected to actually energize. The other 294 are a wind project in COMED at 11%, a
+battery at 16%, and the slow attrition of things that filed but never built.
+interconnect-alpha puts a survival probability on each one. (Those figures are the
+730-day `show` output over the committed `data/` fixtures, as-of 2026-08-01,
+base-case.)
 
 ## What it does
 
