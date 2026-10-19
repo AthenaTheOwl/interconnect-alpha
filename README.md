@@ -133,10 +133,10 @@ interconnect-alpha/
   decisions/ DEC-ITA-* architectural choices
 ```
 
-## License
-
-MIT. See [LICENSE](LICENSE).
-
 ## Method update
 
 [October method update: Withdrawal is a competing event, not proof of eventual delivery](docs/withdrawal-and-censoring.md).
+
+## License
+
+MIT. See [LICENSE](LICENSE).
