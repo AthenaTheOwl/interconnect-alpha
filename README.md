@@ -1,11 +1,13 @@
 # interconnect-alpha
 
-Five hundred seventy megawatts sit in the PJM queue. Two hundred seventy-six are
-expected to actually energize. The other 294 are a wind project in COMED at 11%, a
-battery at 16%, and the slow attrition of things that filed but never built.
-interconnect-alpha puts a survival probability on each one. (Those figures are the
-730-day `show` output over the committed `data/` fixtures, as-of 2026-08-01,
-base-case.)
+Four PJM queue projects carry five hundred seventy megawatts of nameplate. Weight
+each one by its fuel's Kaplan-Meier chance of reaching COD within 730 days of queue
+entry and two hundred seventy-six megawatts come out the other side. The other 294
+are mostly a wind project in COMED at 11% and a battery at 16%. interconnect-alpha
+puts a survival probability on each one. (Those figures are the 730-day `show`
+output over the committed `data/` fixtures, as-of 2026-08-01, base-case. Each
+project carries its fuel class's curve, so the 220 MW gas plant that came online in
+May 2026 still scores 89%.)
 
 ## What it does
 
