@@ -179,6 +179,7 @@ def test_committed_survival_matches_fresh_recomputation():
         recomputed, on=["project_id", "days_to_event"], suffixes=("_c", "_r")
     )
     assert len(merged) == len(committed) == 8
+    assert list(merged["basis_c"]) == list(merged["basis_r"])
     for col in ("survival_prob", "confidence_low", "confidence_high"):
         for c, r in zip(merged[f"{col}_c"], merged[f"{col}_r"]):
             assert c == pytest.approx(r, abs=1e-4)
@@ -194,9 +195,12 @@ def test_survival_rows_move_when_the_cohort_moves():
         Subject(1500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
     ]
     moved = base + [Subject(300.0, 1, "gas") for _ in range(6)]
+    # PJM-ALPHA-003 is online in the shipped fixture; score it as still active
+    # here so its row reads the gas curve.
+    projects = [dict(p, actual_cod="", status="active") for p in ba.DISPLAY_PROJECTS]
 
-    rows_base = ba.build_survival_rows(base)
-    rows_moved = ba.build_survival_rows(moved)
+    rows_base = ba.build_survival_rows(base, projects)
+    rows_moved = ba.build_survival_rows(moved, projects)
 
     gas_base = _survival_row(rows_base, "PJM-ALPHA-003", 730)
     gas_moved = _survival_row(rows_moved, "PJM-ALPHA-003", 730)
@@ -216,3 +220,18 @@ def test_committed_survival_is_not_the_old_literals():
     gas = _survival_row(committed, "PJM-ALPHA-003", 730)
     wind = _survival_row(committed, "PJM-ALPHA-004", 730)
     assert (1 - gas) > (1 - wind)
+
+
+def test_online_project_counts_as_built():
+    # PJM-ALPHA-003 reached COD on 2026-05-30, before the 2026-08-01 as-of date.
+    # It is built: survival 0 with no band at every horizon, whatever the gas
+    # curve says.
+    subjects = [Subject(200.0, 1, "gas"), Subject(5000.0, 0, "gas")]
+    subjects += [Subject(900.0, 1, f) for f in ("solar", "battery", "wind")]
+    rows = ba.build_survival_rows(subjects)
+    online = rows[rows["project_id"] == "PJM-ALPHA-003"]
+    assert len(online) == len(ba.DISPLAY_HORIZONS)
+    assert set(online["basis"]) == {"observed_cod"}
+    assert (online["survival_prob"] == 0.0).all()
+    assert (online["confidence_low"] == 0.0).all()
+    assert (online["confidence_high"] == 0.0).all()

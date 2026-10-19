@@ -12,14 +12,14 @@ Canonical scenario: `base-case`
 
 ## Project Survival
 
-Per-fuel Kaplan-Meier survival read at the horizon, days since queue entry. COD probability is `1 - survival_prob`; the interval is the Greenwood band.
+Per-fuel Kaplan-Meier survival read at the horizon, days since queue entry. COD probability is `1 - survival_prob`; the interval is the Greenwood band. A project that reached COD by the as-of date counts as built (basis `observed_cod`): probability 1, no band, no curve.
 
-| project_id | PJM zone | fuel | 730-day COD probability | 95% interval |
-| --- | --- | --- | ---: | ---: |
-| PJM-ALPHA-001 | PSEG | solar | 0.42 | 0.20-0.64 |
-| PJM-ALPHA-002 | RTO | battery | 0.16 | 0.00-0.32 |
-| PJM-ALPHA-003 | EMAAC | gas | 0.89 | 0.76-1.00 |
-| PJM-ALPHA-004 | COMED | wind | 0.11 | 0.00-0.24 |
+| project_id | PJM zone | fuel | basis | 730-day COD probability | 95% interval |
+| --- | --- | --- | --- | ---: | ---: |
+| PJM-ALPHA-001 | PSEG | solar | km_from_entry | 0.42 | 0.20-0.64 |
+| PJM-ALPHA-002 | RTO | battery | km_from_entry | 0.16 | 0.00-0.32 |
+| PJM-ALPHA-003 | EMAAC | gas | observed_cod | 1.00 | observed |
+| PJM-ALPHA-004 | COMED | wind | km_from_entry | 0.11 | 0.00-0.24 |
 
 ## Capacity Price Fan
 

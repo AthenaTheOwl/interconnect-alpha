@@ -174,22 +174,38 @@ def fit_fuel_curves(subjects: list[Subject]):
     }
 
 
-def build_survival_rows(subjects: list[Subject]) -> pd.DataFrame:
+def project_estimate(project: dict, curve, horizon: int) -> tuple[str, float, float, float]:
+    """``(basis, survival_prob, confidence_low, confidence_high)`` for one project.
+
+    A project that reached COD on or before the as-of date is built: survival is
+    0 with no band (basis ``observed_cod``). Its fuel curve is not consulted.
+    Everything else reads its fuel's KM curve at the horizon (``km_from_entry``).
+    """
+    if project["actual_cod"] and date.fromisoformat(project["actual_cod"]) <= AS_OF:
+        return ("observed_cod", 0.0, 0.0, 0.0)
+    surv = curve.survival_at(horizon)
+    lo, hi = curve.ci_at(horizon)
+    return ("km_from_entry", surv, lo, hi)
+
+
+def build_survival_rows(
+    subjects: list[Subject], projects: list[dict] = DISPLAY_PROJECTS
+) -> pd.DataFrame:
     curves = fit_fuel_curves(subjects)
     as_of = _iso(AS_OF)
     records = []
-    for proj in DISPLAY_PROJECTS:
+    for proj in projects:
         curve = curves[proj["fuel"]]
         for h in DISPLAY_HORIZONS:
-            surv = curve.survival_at(h)
-            lo, hi = curve.ci_at(h)
+            basis, surv, lo, hi = project_estimate(proj, curve, h)
             records.append(
-                [proj["project_id"], as_of, h, round(surv, 4), round(lo, 4), round(hi, 4)]
+                [proj["project_id"], as_of, h, basis,
+                 round(surv, 4), round(lo, 4), round(hi, 4)]
             )
     return pd.DataFrame(
         records,
         columns=[
-            "project_id", "as_of", "days_to_event",
+            "project_id", "as_of", "days_to_event", "basis",
             "survival_prob", "confidence_low", "confidence_high",
         ],
     )
@@ -306,9 +322,12 @@ def _cod(survival_prob: float) -> float:
 
 def write_report(root: Path, survival: pd.DataFrame, calib: Calibration, cohort_n: int) -> None:
     by_project = {
-        pid: {int(h): (sp, lo, hi) for _, h, sp, lo, hi in grp.itertuples(index=False)}
+        pid: {
+            int(h): (basis, sp, lo, hi)
+            for _, h, basis, sp, lo, hi in grp.itertuples(index=False)
+        }
         for pid, grp in (
-            survival[["project_id", "days_to_event", "survival_prob",
+            survival[["project_id", "days_to_event", "basis", "survival_prob",
                       "confidence_low", "confidence_high"]].groupby("project_id")
         )
     }
@@ -330,15 +349,18 @@ def write_report(root: Path, survival: pd.DataFrame, calib: Calibration, cohort_
     )
     lines.append("## Project Survival\n")
     lines.append("Per-fuel Kaplan-Meier survival read at the horizon, days since queue entry. "
-                 "COD probability is `1 - survival_prob`; the interval is the Greenwood band.\n")
-    lines.append("| project_id | PJM zone | fuel | 730-day COD probability | 95% interval |")
-    lines.append("| --- | --- | --- | ---: | ---: |")
+                 "COD probability is `1 - survival_prob`; the interval is the Greenwood band. "
+                 "A project that reached COD by the as-of date counts as built "
+                 "(basis `observed_cod`): probability 1, no band, no curve.\n")
+    lines.append("| project_id | PJM zone | fuel | basis | 730-day COD probability | 95% interval |")
+    lines.append("| --- | --- | --- | --- | ---: | ---: |")
     for pid in order:
-        sp, lo, hi = by_project[pid][730]
+        basis, sp, lo, hi = by_project[pid][730]
+        interval = "observed" if basis == "observed_cod" else f"{_cod(hi):.2f}-{_cod(lo):.2f}"
         lines.append(
             f"| {pid} | {zones[pid]} | "
             f"{next(p['fuel'] for p in DISPLAY_PROJECTS if p['project_id']==pid)} | "
-            f"{_cod(sp):.2f} | {_cod(hi):.2f}-{_cod(lo):.2f} |"
+            f"{basis} | {_cod(sp):.2f} | {interval} |"
         )
     lines.append("")
     lines.append("## Capacity Price Fan\n")

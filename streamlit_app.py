@@ -53,6 +53,7 @@ def build_rows() -> tuple[list[dict], dict]:
             "zone": r["zone"],
             "fuel": r["fuel"],
             "status": r["status"],
+            "basis": r["basis"],
             "MW": r["mw"],
             "cod_prob": r["cod_prob"],
             "lo": r["lo"],
@@ -117,7 +118,9 @@ st.dataframe(
             "fuel": r["fuel"],
             "MW": round(r["MW"]),
             "COD p(730d)": f"{r['cod_prob']:.0%}",
-            "95% interval": f"{r['lo']:.0%}-{r['hi']:.0%}",
+            "95% interval": (
+                "observed" if r["basis"] == "observed_cod" else f"{r['lo']:.0%}-{r['hi']:.0%}"
+            ),
             "phantom MW": round(r["phantom_MW"]),
             "status": r["status"],
         }

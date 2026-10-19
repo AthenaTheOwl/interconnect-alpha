@@ -37,15 +37,19 @@ def test_show_command_prints_ranked_report(capsys):
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    # Ranked by COD probability: the gas project (89%) leads, wind (11%) trails.
+    # Ranked by COD probability: the gas plant already online leads, wind trails.
     # These numbers are now COMPUTED by the per-fuel Kaplan-Meier fit in
     # scripts/build_artifacts.py, not hand-typed; test_survival.py proves that.
     assert "ranked by 730-day probability of reaching COD" in output
-    assert "PJM-ALPHA-003" in output
-    assert "89%" in output
     alpha003 = output.index("PJM-ALPHA-003")
     alpha004 = output.index("PJM-ALPHA-004")
     assert alpha003 < alpha004
+    # PJM-ALPHA-003 came online 2026-05-30, before the as-of date: it counts as
+    # built at full MW, and it is not the "most likely to energize" forecast.
+    alpha003_line = next(line for line in output.splitlines() if line.startswith("PJM-ALPHA-003"))
+    assert "100%" in alpha003_line and "observed" in alpha003_line
+    assert "220 of them already online" in output
+    assert "most likely to energize: PJM-ALPHA-003" not in output
     # Surfaces the capacity fan and the calibration edge, not raw JSON.
     assert "capacity-price fan" in output
     assert "beats naive" in output

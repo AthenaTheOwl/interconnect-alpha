@@ -34,17 +34,19 @@ def _read_table(root: Path, relative: str):
         raise ValidationError("show", f"cannot read {relative} under {root}: {exc}") from exc
 
 
-def _load_survival(root: Path) -> dict[str, dict[int, dict[str, float]]]:
+def _load_survival(root: Path) -> dict[str, dict[int, dict[str, object]]]:
     table = _read_table(root, "data/survival_distributions.parquet")
-    out: dict[str, dict[int, dict[str, float]]] = {}
-    for pid, horizon, surv, lo, hi in zip(
+    out: dict[str, dict[int, dict[str, object]]] = {}
+    for pid, horizon, basis, surv, lo, hi in zip(
         table["project_id"],
         table["days_to_event"],
+        table["basis"],
         table["survival_prob"],
         table["confidence_low"],
         table["confidence_high"],
     ):
         out.setdefault(str(pid), {})[int(horizon)] = {
+            "basis": str(basis),
             "survival": float(surv),
             "low": float(lo),
             "high": float(hi),
@@ -135,11 +137,16 @@ def score_project(
 
 
 def rank_cohort(
-    survival: dict[str, dict[int, dict[str, float]]],
+    survival: dict[str, dict[int, dict[str, object]]],
     cohort: dict[str, dict[str, object]],
     horizon: int = 730,
 ) -> list[dict]:
-    """Score every project at `horizon` and rank by COD probability (desc)."""
+    """Score every project at `horizon` and rank by COD probability (desc).
+
+    Each row carries the survival row's `basis`. `observed_cod` rows reached COD
+    by the as-of date: survival 0, so COD probability 1 and the full MW count as
+    built.
+    """
     rows: list[dict] = []
     for pid, horizons in survival.items():
         h = horizons.get(horizon)
@@ -158,11 +165,29 @@ def rank_cohort(
                 "zone": meta.get("zone", "?"),
                 "fuel": meta.get("fuel", "?"),
                 "status": meta.get("status", "?"),
+                "basis": h.get("basis", "?"),
                 **scored,
             }
         )
     rows.sort(key=lambda r: r["cod_prob"], reverse=True)
     return rows
+
+
+def summarize(rows: list[dict]) -> dict[str, float]:
+    """MW totals over ranked rows: nameplate, already online, expected, phantom.
+
+    `expected_mw` counts online projects at full MW plus each forecast project's
+    MW weighted by its COD probability; `phantom_mw` is the forecast remainder.
+    """
+    online = [r for r in rows if r["basis"] == "observed_cod"]
+    forecast = [r for r in rows if r["basis"] != "observed_cod"]
+    online_mw = sum(r["mw"] for r in online)
+    return {
+        "nameplate_mw": sum(r["mw"] for r in rows),
+        "online_mw": online_mw,
+        "expected_mw": online_mw + sum(r["expected_mw"] for r in forecast),
+        "phantom_mw": sum(r["phantom_mw"] for r in forecast),
+    }
 
 
 def render(root: Path | None = None) -> str:
@@ -178,11 +203,11 @@ def render(root: Path | None = None) -> str:
 
     lines: list[str] = []
     lines.append("interconnect-alpha - PJM queue survival, as-of 2026-08-01 (base-case)")
-    expected_mw = sum(r["mw"] * r["cod_prob"] for r in rows)
-    nameplate_mw = sum(r["mw"] for r in rows)
+    totals = summarize(rows)
     lines.append(
         f"{len(rows)} project(s), ranked by 730-day probability of reaching COD. "
-        f"{expected_mw:.0f} of {nameplate_mw:.0f} nameplate MW expected to energize.\n"
+        f"{totals['expected_mw']:.0f} of {totals['nameplate_mw']:.0f} nameplate MW expected "
+        f"to energize, {totals['online_mw']:.0f} of them already online.\n"
     )
 
     header = (
@@ -192,24 +217,31 @@ def render(root: Path | None = None) -> str:
     lines.append(header)
     lines.append("-" * len(header))
     for r in rows:
+        if r["basis"] == "observed_cod":
+            interval = f"{'observed':>9}  "
+        else:
+            interval = f"{r['lo']:>5.0%}-{r['hi']:<5.0%}"
         lines.append(
             f"{r['pid']:<14} {r['zone']:<6} {r['fuel']:<8} {r['mw']:>5.0f}M "
             f"{r['cod_prob']:>10.0%} "
-            f"{r['lo']:>5.0%}-{r['hi']:<5.0%}  {r['status']}"
+            f"{interval}  {r['status']}"
         )
 
-    best = rows[0]
-    worst = rows[-1]
-    lines.append("")
-    lines.append(
-        f"most likely to energize: {best['pid']} ({best['zone']}, {best['fuel']}, "
-        f"{best['mw']:.0f}MW) at {best['cod_prob']:.0%} by 730d."
-    )
-    lines.append(
-        f"most at risk: {worst['pid']} ({worst['zone']}, {worst['fuel']}, "
-        f"{worst['mw']:.0f}MW) at only {worst['cod_prob']:.0%} - "
-        f"{worst['mw'] * (1 - worst['cod_prob']):.0f}MW of phantom queue capacity."
-    )
+    # Best and worst are forecasts; a project already online is neither.
+    forecast = [r for r in rows if r["basis"] != "observed_cod"]
+    if forecast:
+        lines.append("")
+        best = forecast[0]
+        worst = forecast[-1]
+        lines.append(
+            f"most likely to energize: {best['pid']} ({best['zone']}, {best['fuel']}, "
+            f"{best['mw']:.0f}MW) at {best['cod_prob']:.0%} by 730d."
+        )
+        lines.append(
+            f"most at risk: {worst['pid']} ({worst['zone']}, {worst['fuel']}, "
+            f"{worst['mw']:.0f}MW) at only {worst['cod_prob']:.0%} - "
+            f"{worst['phantom_mw']:.0f}MW of phantom queue capacity."
+        )
 
     lines.append("")
     lines.append("capacity-price fan (RTO, $/MW-day):")

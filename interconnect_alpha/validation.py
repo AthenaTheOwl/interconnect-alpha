@@ -56,6 +56,7 @@ PARQUET_SCHEMAS = {
         "project_id",
         "as_of",
         "days_to_event",
+        "basis",
         "survival_prob",
         "confidence_low",
         "confidence_high",
