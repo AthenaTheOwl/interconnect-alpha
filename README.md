@@ -135,7 +135,7 @@ interconnect-alpha/
 
 ## Method update
 
-[October method update: Withdrawal is a competing event, not proof of eventual delivery](docs/withdrawal-and-censoring.md).
+[October method update: Withdrawal as a competing event in the survival fit](docs/withdrawal-and-censoring.md).
 
 ## License
 
