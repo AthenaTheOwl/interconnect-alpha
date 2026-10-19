@@ -12,4 +12,3 @@ The implemented refresh rejects negative or nonfinite durations, invalid event i
 
 - https://lifelines.readthedocs.io/en/latest/fitters/univariate/AalenJohansenFitter.html
 - https://scikit-learn.org/stable/modules/calibration.html
-- https://github.com/3orionkings/ai-product-team/blob/main/workflows/process-change.md
