@@ -119,6 +119,44 @@ def test_backtest_excludes_undetermined_outcomes():
 
 
 # ---------------------------------------------------------------------------
+# Cohort: withdrawal keeps its own date
+# ---------------------------------------------------------------------------
+
+
+def test_generator_keeps_announced_cod_on_withdrawn_rows():
+    rows = ba.generate_cohort()
+    withdrawn = [r for r in rows if r["status"] == "withdrawn"]
+    assert withdrawn
+    for r in withdrawn:
+        # the exit date sits in its own column, after queue entry and no later
+        # than the announced COD the developer filed
+        assert r["queue_date"] < r["withdrawal_date"] <= r["announced_cod"]
+    # announced_cod is not overwritten with the exit date
+    assert any(r["withdrawal_date"] < r["announced_cod"] for r in withdrawn)
+    assert all(r["withdrawal_date"] == "" for r in rows if r["status"] != "withdrawn")
+
+
+def test_withdrawn_subject_is_censored_at_its_withdrawal_date():
+    row = {
+        "project_id": "PJM-WI-900", "zone": "RTO", "fuel": "wind",
+        "queue_date": "2020-01-01", "announced_cod": "2024-01-01", "actual_cod": "",
+        "withdrawal_date": "2021-01-01", "status": "withdrawn", "capacity_mw": 50.0,
+    }
+    [subject] = ba.cohort_to_subjects([row])
+    assert subject.event == 0
+    assert subject.duration == 366.0  # 2020 is a leap year; announced_cod plays no part
+
+
+def test_committed_cohort_has_withdrawal_dates():
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    withdrawn = cohort[cohort["status"] == "withdrawn"]
+    assert len(withdrawn) > 0
+    assert (withdrawn["withdrawal_date"] != "").all()
+    assert (withdrawn["withdrawal_date"] != withdrawn["announced_cod"]).any()
+    assert (cohort.loc[cohort["status"] != "withdrawn", "withdrawal_date"] == "").all()
+
+
+# ---------------------------------------------------------------------------
 # The committed artifacts are computed, not literals
 # ---------------------------------------------------------------------------
 

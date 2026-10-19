@@ -65,16 +65,16 @@ FUEL_ZONES = {
 DISPLAY_PROJECTS = [
     {"project_id": "PJM-ALPHA-001", "zone": "PSEG", "fuel": "solar",
      "queue_date": "2019-03-14", "announced_cod": "2027-06-01", "actual_cod": "",
-     "status": "active", "capacity_mw": 120.0},
+     "withdrawal_date": "", "status": "active", "capacity_mw": 120.0},
     {"project_id": "PJM-ALPHA-002", "zone": "RTO", "fuel": "battery",
      "queue_date": "2020-07-22", "announced_cod": "2027-12-01", "actual_cod": "",
-     "status": "active", "capacity_mw": 80.0},
+     "withdrawal_date": "", "status": "active", "capacity_mw": 80.0},
     {"project_id": "PJM-ALPHA-003", "zone": "EMAAC", "fuel": "gas",
      "queue_date": "2018-11-02", "announced_cod": "2026-11-15", "actual_cod": "2026-05-30",
-     "status": "online", "capacity_mw": 220.0},
+     "withdrawal_date": "", "status": "online", "capacity_mw": 220.0},
     {"project_id": "PJM-ALPHA-004", "zone": "COMED", "fuel": "wind",
      "queue_date": "2021-02-18", "announced_cod": "2028-05-01", "actual_cod": "",
-     "status": "active", "capacity_mw": 150.0},
+     "withdrawal_date": "", "status": "active", "capacity_mw": 150.0},
 ]
 
 
@@ -111,6 +111,7 @@ def generate_cohort(seed: int = COHORT_SEED) -> list[dict]:
                 "queue_date": _iso(queue),
                 "announced_cod": _iso(queue + timedelta(days=rng.randint(900, 1800))),
                 "actual_cod": "",
+                "withdrawal_date": "",
                 "status": "active",
                 "capacity_mw": mw,
             }
@@ -122,14 +123,16 @@ def generate_cohort(seed: int = COHORT_SEED) -> list[dict]:
                     row["status"] = "online"
                 # else: energizes after the report date -> still active (censored)
             elif roll < params["p_event"] + params["p_withdraw"]:
-                # withdrawn before its announced COD; censored at that exit date
+                # withdrawn before its announced COD; censored at that exit date.
+                # The exit date gets its own column so announced_cod keeps the
+                # developer's announced date.
                 exit_date = min(
                     date.fromisoformat(row["announced_cod"]),
                     AS_OF - timedelta(days=rng.randint(0, 400)),
                 )
                 if exit_date > queue:
                     row["status"] = "withdrawn"
-                    row["announced_cod"] = _iso(exit_date)
+                    row["withdrawal_date"] = _iso(exit_date)
             rows.append(row)
     return rows
 
@@ -144,7 +147,7 @@ def cohort_to_subjects(rows: list[dict]) -> list[Subject]:
             duration = _days(row["actual_cod"], queue)
             event = 1
         elif row["status"] == "withdrawn":
-            duration = _days(row["announced_cod"], queue)  # censored at exit
+            duration = _days(row["withdrawal_date"], queue)  # censored at exit
             event = 0
         else:
             duration = _days(as_of, queue)  # active: censored at report date
@@ -410,7 +413,7 @@ def build(root: Path) -> dict:
     cohort_df = pd.DataFrame(
         cohort_rows,
         columns=["project_id", "zone", "fuel", "queue_date", "announced_cod",
-                 "actual_cod", "status", "capacity_mw"],
+                 "actual_cod", "withdrawal_date", "status", "capacity_mw"],
     )
     cohort_df.to_parquet(data_dir / "pjm_queue_cohort_2018_2023.parquet", index=False)
 

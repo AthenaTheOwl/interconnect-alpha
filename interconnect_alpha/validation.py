@@ -48,6 +48,7 @@ PARQUET_SCHEMAS = {
         "queue_date",
         "announced_cod",
         "actual_cod",
+        "withdrawal_date",
         "status",
         "capacity_mw",
     },
