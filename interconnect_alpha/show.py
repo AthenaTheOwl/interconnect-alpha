@@ -225,7 +225,7 @@ def render(root: Path | None = None) -> str:
         edge = c["naive"] - c["brier"]
         lines.append("")
         lines.append(
-            f"calibration: 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
+            f"calibration (in-sample): 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
             f"(-{edge:.3f}); forecasts are better than a base-rate guess."
         )
     return "\n".join(lines)

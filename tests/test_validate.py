@@ -54,6 +54,8 @@ def test_show_command_prints_ranked_report(capsys):
     assert "2027: p10 $190  p50 $244  p90 $315" in output
     # Pin the concrete computed calibration numbers and the edge sign for 730d.
     assert "Brier 0.141 beats naive 0.239 (-0.098)" in output
+    # The backtest fits and scores the same rows; the line must say so.
+    assert "calibration (in-sample): 730-day Brier" in output
 
 
 def test_rank_constraints_returns_fixture_factor_scores():

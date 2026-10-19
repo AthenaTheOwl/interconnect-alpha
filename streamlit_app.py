@@ -139,7 +139,7 @@ c = calib.get(HORIZON)
 if c:
     edge = c["naive"] - c["brier"]
     st.success(
-        f"**calibration:** 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
+        f"**calibration (in-sample):** 730-day Brier {c['brier']:.3f} beats naive {c['naive']:.3f} "
         f"(-{edge:.3f}); forecasts are better than a base-rate guess."
     )
 

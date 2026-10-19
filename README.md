@@ -56,7 +56,7 @@ capacity-price fan (RTO, $/MW-day):
   2029: p10 $210  p50 $274  p90 $358
   2030: p10 $198  p50 $260  p90 $340
 
-calibration: 730-day Brier 0.141 beats naive 0.239 (-0.098); forecasts are better than a base-rate guess.
+calibration (in-sample): 730-day Brier 0.141 beats naive 0.239 (-0.098); forecasts are better than a base-rate guess.
 ```
 
 Ranked by 730-day probability of reaching COD, surest build at the top. Each
