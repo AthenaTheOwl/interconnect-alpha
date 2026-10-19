@@ -119,11 +119,21 @@ def kaplan_meier(
     """
     if len(durations) != len(events):
         raise ValueError("durations and events must have equal length")
+    if not math.isfinite(z) or z <= 0:
+        raise ValueError("z must be finite and positive")
+    try:
+        numeric_durations = [float(d) for d in durations]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("durations must be finite and non-negative") from exc
+    if any(not math.isfinite(d) or d < 0 for d in numeric_durations):
+        raise ValueError("durations must be finite and non-negative")
+    if any(e not in (0, 1) for e in events):
+        raise ValueError("events must contain only 0 or 1")
     n_total = len(durations)
     if n_total == 0:
         return KMCurve(points=(), n_total=0, n_events=0, z=z)
 
-    pairs = sorted(zip((float(d) for d in durations), (int(e) for e in events)))
+    pairs = sorted(zip(numeric_durations, (int(e) for e in events)))
     event_times = sorted({d for d, e in pairs if e == 1})
 
     points: list[KMPoint] = []
