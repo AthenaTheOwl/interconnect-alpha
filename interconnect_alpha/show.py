@@ -2,9 +2,10 @@
 
 The `validate` command proves the artifacts are well-formed. `show` answers the
 question a user actually has: of the projects in the queue, which capacity is
-likely to reach commercial operation (COD) by the 730-day horizon, and which is
-likely to stall? It joins the committed survival distributions with the queue
-cohort metadata and the capacity-price fan, then prints a ranked table.
+likely to reach commercial operation (COD) within 730 days of the as-of date,
+given days already in the queue, and which is likely to stall? It joins the
+committed survival distributions with the queue cohort metadata and the
+capacity-price fan, then prints a ranked table.
 
 Read-only and offline. Defaults to the checked-in fixtures under data/.
 """

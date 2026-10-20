@@ -1,8 +1,9 @@
 """interconnect-alpha — live demo (Streamlit Community Cloud).
 
 Reads the committed PJM survival fixtures under data/ and shows which queued
-projects are likely to reach commercial operation (COD) by the 730-day horizon,
-and which capacity is "phantom" (announced in the queue but unlikely to energize).
+projects are likely to reach commercial operation (COD) within 730 days of the
+as-of date, given days already in the queue, and which capacity is "phantom"
+(announced in the queue but unlikely to energize).
 This mirrors the `python -m interconnect_alpha show` verb — same insight, prettier.
 
 No network, no secrets — runs entirely off the committed fixtures.

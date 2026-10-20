@@ -185,7 +185,7 @@ def project_estimate(project: dict, curve, horizon: int) -> tuple[str, int, floa
     the project has already waited at the as-of date. Three cases:
 
     - ``observed_cod``: COD on or before the as-of date. The project is built:
-      survival 0 with no band, and the fuel curve is not consulted.
+      survival 0 with the band stored as 0-0, and the fuel curve is not consulted.
     - ``conditional_km``: still active, and its fuel cohort holds a COD after this
       age. Survival is ``S(age + horizon) / S(age)`` with the Greenwood band over
       ``(age, age + horizon]``.

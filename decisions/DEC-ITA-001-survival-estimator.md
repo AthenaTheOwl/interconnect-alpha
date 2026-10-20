@@ -32,8 +32,10 @@ computes the Brier backtest of the per-fuel COD forecast against the naive
 base-rate baseline. `scripts/build_artifacts.py` fits both over the queue cohort
 and writes `survival_distributions.parquet` and `calibration_metrics.json` from
 the fitted output, so the numbers move when the cohort moves. The schema in the
-Decision section is unchanged, so `show`/`validate` and downstream consumers keep
-working.
+Decision section was unchanged by that fix, so `show`/`validate` and downstream
+consumers kept working; the 2026-10-19 amendment below since added two required
+columns, changed what `days_to_event` counts, and made `survival_prob` and the band
+nullable on `flat_tail` rows.
 
 The backtest is labelled in-sample because the shipped cohort is a small
 synthetic fixture; the earlier `held_out_fold_count: 5` claim was unearned and has
@@ -51,7 +53,7 @@ been removed. See STATUS.md "Known limits".
 The survival rows gained two columns, and `days_to_event` changed its reference
 point. The six columns above are still present.
 
-- `basis`: `observed_cod` (COD on or before `as_of`; survival 0, no band),
+- `basis`: `observed_cod` (COD on or before `as_of`; survival 0, band stored as 0-0),
   `conditional_km` (active; the fuel curve conditional on days already in the
   queue), or `flat_tail` (active, and the fuel curve cannot back the window
   `(queue_age_days, queue_age_days + days_to_event]`: the project is older than
