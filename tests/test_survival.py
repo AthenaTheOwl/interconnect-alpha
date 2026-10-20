@@ -235,12 +235,15 @@ def test_survival_rows_move_when_the_cohort_moves():
 
 def test_committed_survival_is_not_the_old_literals():
     # The retired hand-typed table had solar(730)=0.41 and battery(730)=0.52.
-    committed = pd.read_parquet(ROOT / "data/survival_distributions.parquet")
-    assert _survival_row(committed, "PJM-ALPHA-001", 730) != 0.41
-    assert _survival_row(committed, "PJM-ALPHA-002", 730) != 0.52
-    # Ranking the product depends on: the gas curve clears faster than wind.
+    # The committed 001/002 rows are now flat_tail (null), so a != check on them
+    # would pass on NaN; check the fitted 730-day fuel survival instead.
     cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
     curves = ba.fit_fuel_curves(ba.cohort_to_subjects(cohort.to_dict("records")))
+    solar = round(curves["solar"].survival_at(730), 4)
+    battery = round(curves["battery"].survival_at(730), 4)
+    assert not math.isnan(solar) and solar != 0.41
+    assert not math.isnan(battery) and battery != 0.52
+    # Ranking the product depends on: the gas curve clears faster than wind.
     assert curves["gas"].survival_at(730) < curves["wind"].survival_at(730)
 
 
