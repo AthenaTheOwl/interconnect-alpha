@@ -25,10 +25,10 @@ already spent in the queue, and backtests the per-fuel forecast with a Brier sco
 against the naive base-rate baseline so the probabilities are computed rather than
 asserted. The backtest here is **in-sample**: the shipped
 cohort is a small synthetic fixture, so the same rows are used to fit and to score
-(see STATUS.md). On top of the survival output it fits a capacity-price fan — the
-$/MW-day band PJM clears at, conditioned on how much of the queue is expected to
-show up. The survival math and the capacity-curve fitter are the point; the data
-adapter is small and offline by design.
+(see STATUS.md). It also prints a capacity-price fan, the $/MW-day band PJM
+clears at. That fan is a fixed scenario table: it is not yet conditioned on the
+survival output, so it does not move when the expected queue MW moves. The
+survival math is the point; the data adapter is small and offline by design.
 
 ## try it
 
@@ -79,8 +79,9 @@ curve from queue entry: an in-sample 0.141 against a naive base-rate 0.239 means
 conditioning on fuel type beats a single base-rate guess. Withdrawn projects are
 censored at their withdrawal date, which reads withdrawal as uninformative about
 COD; [the method note](docs/withdrawal-and-censoring.md) says what a competing-risks
-fit would change. All of these numbers are recomputed by
-`scripts/build_artifacts.py` from the cohort; none are hand-typed.
+fit would change. The survival and Brier numbers are recomputed by
+`scripts/build_artifacts.py` from the cohort; none are hand-typed. The fan figures
+are fixed scenario values that the same script writes out.
 
 To check the artifacts are well-formed: `python -m interconnect_alpha validate`.
 
