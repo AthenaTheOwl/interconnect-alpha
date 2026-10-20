@@ -14,9 +14,9 @@ Censoring a withdrawn project at its withdrawal date tells the estimator that, h
 
 A competing-risks fit keeps the three outcomes apart (COD, withdrawal, still active at the cutoff) and estimates the cumulative incidence of COD with the Aalen-Johansen estimator: `F_COD(t)` is the sum, over COD times `t_j <= t`, of `S_any(t_j-) * d_j / n_j`, where `S_any` is the Kaplan-Meier curve for leaving the queue by either route, `d_j` the CODs at `t_j` and `n_j` the projects at risk. Switching would change four things:
 
-- Per-fuel COD probabilities. `F_COD(t) <= 1 - S(t)` at every `t`, with equality when no withdrawal precedes `t`. Fuels with early withdrawals move most; a fuel with none does not move. The withdrawn column of the report's fuel-curve table shows where that applies (gas has none in the fixture).
-- The conditional view. An active project of age `a` would be scored on `(F_COD(a + h) - F_COD(a)) / S_any(a)` in place of `S(a + h) / S(a)`.
-- The Brier backtest. A project that withdrew before the horizon has a known outcome (no COD by then). It would be scored as 0; today it is dropped as undetermined. `n_scored` rises at each horizon.
+- Per-fuel COD probabilities. `F_COD(t) <= 1 - S(t)` at every `t`, with equality when no withdrawal precedes `t`. Fuels with early withdrawals move most; a fuel with none does not move. In the shipped fixture every withdrawal lands 1,016 days or more after queue entry, so the 730-day column of the report's fuel-curve table would not change for any fuel. The withdrawn counts in that table (gas has none) only matter at longer horizons.
+- The conditional view. An active project of age `a` would get COD probability `(F_COD(a + h) - F_COD(a)) / S_any(a)` in place of `1 - S(a + h) / S(a)`.
+- The Brier backtest. A project that withdrew before the horizon has a known outcome (no COD by then). It would be scored as 0; today it is dropped as undetermined. `n_scored` rises at any horizon later than a withdrawal. In the shipped fixture no withdrawal precedes day 730, so the 365- and 730-day scores would not change; only the 1,460-day score would, with `n_scored` going from 65 to 72.
 - Nothing about the flat-tail limit. Past the last COD a fuel cohort observed there is still no COD increment to condition on, so those projects still get no estimate.
 
 The shipped code fits Kaplan-Meier only; no Aalen-Johansen estimate is computed or reported.
