@@ -322,3 +322,16 @@ def test_committed_rows_condition_on_time_waited():
         "PJM-ALPHA-001": 2697, "PJM-ALPHA-002": 2201,
         "PJM-ALPHA-003": 2829, "PJM-ALPHA-004": 1990,
     }
+
+
+def test_withdrawn_project_is_rejected_not_scored():
+    # A withdrawn project has no path to COD; the COD curve must not hand it a
+    # positive COD probability.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    subjects = ba.cohort_to_subjects(cohort.to_dict("records"))
+    withdrawn = dict(
+        ba.DISPLAY_PROJECTS[2], project_id="PJM-GAS-W", queue_date="2025-06-01",
+        actual_cod="", status="withdrawn", withdrawal_date="2026-03-01",
+    )
+    with pytest.raises(ValueError, match="withdrawn"):
+        ba.build_survival_rows(subjects, [withdrawn])

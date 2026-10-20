@@ -194,7 +194,12 @@ def project_estimate(project: dict, curve, horizon: int) -> tuple[str, int, floa
       cohort observed, or the window holds no COD (the curve is flat there for
       lack of events), or its CODs exhaust the risk set and leave a 0-0 band.
       There is no estimate: survival and band are NaN.
+
+    A withdrawn project has no path to COD and the COD curve says nothing about
+    it, so it is rejected with ``ValueError`` rather than scored.
     """
+    if project.get("status") == "withdrawn":
+        raise ValueError(f"{project['project_id']}: withdrawn projects are not scored")
     age = _days(_iso(AS_OF), project["queue_date"])
     if project["actual_cod"] and date.fromisoformat(project["actual_cod"]) <= AS_OF:
         return ("observed_cod", age, 0.0, 0.0, 0.0)
