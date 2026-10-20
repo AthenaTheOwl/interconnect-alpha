@@ -15,7 +15,7 @@ import json
 import math
 from pathlib import Path
 
-from .validation import ValidationError, project_root
+from .validation import PARQUET_SCHEMAS, ValidationError, project_root
 
 
 def _read_table(root: Path, relative: str):
@@ -44,7 +44,14 @@ def _number(value: object) -> float | None:
 
 
 def _load_survival(root: Path) -> dict[str, dict[int, dict[str, object]]]:
-    table = _read_table(root, "data/survival_distributions.parquet")
+    relative = "data/survival_distributions.parquet"
+    table = _read_table(root, relative)
+    missing = sorted(PARQUET_SCHEMAS[relative] - set(table))
+    if missing:
+        # e.g. an artifact built before the `basis`/`queue_age_days` columns.
+        raise ValidationError(
+            "show", f"{relative} under {root} is missing columns: {', '.join(missing)}"
+        )
     out: dict[str, dict[int, dict[str, object]]] = {}
     for pid, horizon, basis, age, surv, lo, hi in zip(
         table["project_id"],

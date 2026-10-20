@@ -126,3 +126,22 @@ def test_write_report_round_trips_last_score(tmp_path):
         '{"name": "capacity-price-spread", "score": 0.62}\n'
     )
 
+
+
+def test_show_rejects_survival_parquet_without_new_columns(tmp_path, capsys):
+    # A survival artifact built before `basis`/`queue_age_days` existed gets the
+    # clean SHOW_ERROR exit, not a KeyError traceback.
+    import shutil
+
+    root = project_root()
+    shutil.copytree(root / "data", tmp_path / "data")
+    path = tmp_path / "data/survival_distributions.parquet"
+    table = pq.read_table(path).drop_columns(["basis", "queue_age_days"])
+    pq.write_table(table, path)
+
+    exit_code = main(["show", "--root", str(tmp_path)])
+    err = capsys.readouterr().err
+
+    assert exit_code != 0
+    assert "SHOW_ERROR" in err
+    assert "missing columns: basis, queue_age_days" in err
