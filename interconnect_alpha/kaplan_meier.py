@@ -109,7 +109,7 @@ class KMCurve:
             return False
         if not any(age < p.time <= age + horizon for p in self.points):
             return False
-        s_cond, lo, hi = self._conditional(age, horizon)
+        _, lo, hi = self._conditional(age, horizon)
         return hi > lo
 
     def _conditional(self, age: float, horizon: float) -> tuple[float, float, float]:
