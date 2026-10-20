@@ -9,6 +9,7 @@ hand-typed literals.
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -74,6 +75,23 @@ def test_km_conditional_survival_is_a_ratio():
     assert 0.0 <= lo <= surv <= hi <= 1.0
 
 
+def test_km_conditional_survival_past_last_event_is_unsupported():
+    curve = kaplan_meier([2, 3, 4, 5, 6], [1, 1, 0, 1, 0])
+    assert curve.last_event_time == 5.0
+    assert curve.supports_conditional(4.9)
+    # At or past the last event (t=5) the curve is flat for lack of events: a
+    # project that old gets no number, not S(age+h)/S(age) = 1.
+    assert not curve.supports_conditional(5)
+    assert not curve.supports_conditional(6)
+    assert all(math.isnan(v) for v in curve.conditional_survival(5, 3))
+    assert all(math.isnan(v) for v in curve.conditional_survival(6, 1))
+    # Once every subject has had the event, S(age)=0: unsupported, not 0/0.
+    all_events = kaplan_meier([1, 2, 3], [1, 1, 1])
+    assert all(math.isnan(v) for v in all_events.conditional_survival(3, 1))
+    # No events at all: nothing to condition on.
+    assert not kaplan_meier([4, 5], [0, 0]).supports_conditional(0)
+
+
 def test_km_all_events_drives_survival_to_zero_without_error():
     curve = kaplan_meier([1, 2, 3], [1, 1, 1])
     assert curve.survival_at(3) == 0.0
@@ -119,6 +137,44 @@ def test_backtest_excludes_undetermined_outcomes():
 
 
 # ---------------------------------------------------------------------------
+# Cohort: withdrawal keeps its own date
+# ---------------------------------------------------------------------------
+
+
+def test_generator_keeps_announced_cod_on_withdrawn_rows():
+    rows = ba.generate_cohort()
+    withdrawn = [r for r in rows if r["status"] == "withdrawn"]
+    assert withdrawn
+    for r in withdrawn:
+        # the exit date sits in its own column, after queue entry and no later
+        # than the announced COD the developer filed
+        assert r["queue_date"] < r["withdrawal_date"] <= r["announced_cod"]
+    # announced_cod is not overwritten with the exit date
+    assert any(r["withdrawal_date"] < r["announced_cod"] for r in withdrawn)
+    assert all(r["withdrawal_date"] == "" for r in rows if r["status"] != "withdrawn")
+
+
+def test_withdrawn_subject_is_censored_at_its_withdrawal_date():
+    row = {
+        "project_id": "PJM-WI-900", "zone": "RTO", "fuel": "wind",
+        "queue_date": "2020-01-01", "announced_cod": "2024-01-01", "actual_cod": "",
+        "withdrawal_date": "2021-01-01", "status": "withdrawn", "capacity_mw": 50.0,
+    }
+    [subject] = ba.cohort_to_subjects([row])
+    assert subject.event == 0
+    assert subject.duration == 366.0  # 2020 is a leap year; announced_cod plays no part
+
+
+def test_committed_cohort_has_withdrawal_dates():
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    withdrawn = cohort[cohort["status"] == "withdrawn"]
+    assert len(withdrawn) > 0
+    assert (withdrawn["withdrawal_date"] != "").all()
+    assert (withdrawn["withdrawal_date"] != withdrawn["announced_cod"]).any()
+    assert (cohort.loc[cohort["status"] != "withdrawn", "withdrawal_date"] == "").all()
+
+
+# ---------------------------------------------------------------------------
 # The committed artifacts are computed, not literals
 # ---------------------------------------------------------------------------
 
@@ -141,9 +197,11 @@ def test_committed_survival_matches_fresh_recomputation():
         recomputed, on=["project_id", "days_to_event"], suffixes=("_c", "_r")
     )
     assert len(merged) == len(committed) == 8
+    assert list(merged["basis_c"]) == list(merged["basis_r"])
+    assert list(merged["queue_age_days_c"]) == list(merged["queue_age_days_r"])
     for col in ("survival_prob", "confidence_low", "confidence_high"):
         for c, r in zip(merged[f"{col}_c"], merged[f"{col}_r"]):
-            assert c == pytest.approx(r, abs=1e-4)
+            assert c == pytest.approx(r, abs=1e-4, nan_ok=True)
 
 
 def test_survival_rows_move_when_the_cohort_moves():
@@ -153,12 +211,18 @@ def test_survival_rows_move_when_the_cohort_moves():
         Subject(200.0, 1, "gas"), Subject(900.0, 0, "gas"),
         Subject(600.0, 1, "solar"), Subject(900.0, 0, "solar"),
         Subject(900.0, 1, "battery"), Subject(900.0, 0, "battery"),
-        Subject(1500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
+        Subject(500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
     ]
     moved = base + [Subject(300.0, 1, "gas") for _ in range(6)]
+    # Score every display project as active and 31 days into the queue at the
+    # as-of date, so the gas and wind rows read a 730-day window holding a COD.
+    projects = [
+        dict(p, queue_date="2026-07-01", actual_cod="", status="active")
+        for p in ba.DISPLAY_PROJECTS
+    ]
 
-    rows_base = ba.build_survival_rows(base)
-    rows_moved = ba.build_survival_rows(moved)
+    rows_base = ba.build_survival_rows(base, projects)
+    rows_moved = ba.build_survival_rows(moved, projects)
 
     gas_base = _survival_row(rows_base, "PJM-ALPHA-003", 730)
     gas_moved = _survival_row(rows_moved, "PJM-ALPHA-003", 730)
@@ -171,10 +235,106 @@ def test_survival_rows_move_when_the_cohort_moves():
 
 def test_committed_survival_is_not_the_old_literals():
     # The retired hand-typed table had solar(730)=0.41 and battery(730)=0.52.
+    # The committed 001/002 rows are now flat_tail (null), so a != check on them
+    # would pass on NaN; check the fitted 730-day fuel survival instead.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    curves = ba.fit_fuel_curves(ba.cohort_to_subjects(cohort.to_dict("records")))
+    solar = round(curves["solar"].survival_at(730), 4)
+    battery = round(curves["battery"].survival_at(730), 4)
+    assert not math.isnan(solar) and solar != 0.41
+    assert not math.isnan(battery) and battery != 0.52
+    # Ranking the product depends on: the gas curve clears faster than wind.
+    assert curves["gas"].survival_at(730) < curves["wind"].survival_at(730)
+
+
+def test_online_project_counts_as_built():
+    # PJM-ALPHA-003 reached COD on 2026-05-30, before the 2026-08-01 as-of date.
+    # It is built: survival 0 with no band at every horizon, whatever the gas
+    # curve says.
+    subjects = [Subject(200.0, 1, "gas"), Subject(5000.0, 0, "gas")]
+    subjects += [Subject(900.0, 1, f) for f in ("solar", "battery", "wind")]
+    rows = ba.build_survival_rows(subjects)
+    online = rows[rows["project_id"] == "PJM-ALPHA-003"]
+    assert len(online) == len(ba.DISPLAY_HORIZONS)
+    assert set(online["basis"]) == {"observed_cod"}
+    assert (online["survival_prob"] == 0.0).all()
+    assert (online["confidence_low"] == 0.0).all()
+    assert (online["confidence_high"] == 0.0).all()
+
+
+def test_active_project_reads_the_curve_conditional_on_time_waited():
+    # Events at 100..1000 days; a project 300 days into the queue at the as-of
+    # date is scored on S(300 + h) / S(300), not on S(h) from queue entry.
+    subjects = [Subject(float(d), 1, "solar") for d in range(100, 1001, 100)]
+    subjects += [Subject(1200.0, 0, "solar")]
+    project = dict(ba.DISPLAY_PROJECTS[0], queue_date="2025-10-05")  # 300 days before as-of
+    curve = ba.fit_fuel_curves(subjects)["solar"]
+    basis, age, surv, lo, hi = ba.project_estimate(project, curve, 365)
+    assert (basis, age) == ("conditional_km", 300)
+    assert (surv, lo, hi) == curve.conditional_survival(300, 365)
+    assert surv == pytest.approx(curve.survival_at(665) / curve.survival_at(300))
+    assert surv != pytest.approx(curve.survival_at(365))
+
+
+def test_project_past_the_last_observed_cod_gets_no_estimate():
+    # The last solar COD is at day 900; a project 2,000 days in has nothing to
+    # condition on, so it gets basis flat_tail and NaN, not a 0% COD chance.
+    subjects = [Subject(float(d), 1, "solar") for d in (300, 600, 900)]
+    subjects += [Subject(2500.0, 0, "solar")]
+    project = dict(ba.DISPLAY_PROJECTS[0], queue_date="2021-02-07")  # 2,001 days before as-of
+    curve = ba.fit_fuel_curves(subjects)["solar"]
+    basis, age, surv, lo, hi = ba.project_estimate(project, curve, 730)
+    assert (basis, age) == ("flat_tail", 2001)
+    assert all(math.isnan(v) for v in (surv, lo, hi))
+
+
+def test_flat_stretch_or_zero_width_band_gets_no_estimate():
+    # The committed gas curve has CODs up to day 729, then a single one at day
+    # 2766 with one subject at risk. A gas project aged 1,000-2,035 days has no
+    # COD in its 730-day window (the curve is flat there for lack of data); one
+    # aged 2,036-2,765 days rests on that lone subject, survival 0 with a 0-0
+    # band. Neither is a supported estimate.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    curve = ba.fit_fuel_curves(ba.cohort_to_subjects(cohort.to_dict("records")))["gas"]
+    for age in (1000, 1500, 2000, 2036, 2500, 2765):
+        assert curve.supports_conditional(age)
+        assert not curve.supports_window(age, 730)
+        assert all(math.isnan(v) for v in curve.conditional_survival(age, 730))
+    assert curve.supports_window(600, 730)
+    gas = dict(ba.DISPLAY_PROJECTS[2], actual_cod="", status="active")
+    for queue_date in ("2022-06-01", "2019-12-01"):  # ages 1,522 and 2,435
+        rows = ba.build_survival_rows(
+            ba.cohort_to_subjects(cohort.to_dict("records")),
+            [dict(gas, project_id="PJM-GAS-X", queue_date=queue_date)],
+        )
+        assert set(rows["basis"]) == {"flat_tail"}
+        assert rows["survival_prob"].isna().all()
+
+
+def test_committed_rows_condition_on_time_waited():
     committed = pd.read_parquet(ROOT / "data/survival_distributions.parquet")
-    assert _survival_row(committed, "PJM-ALPHA-001", 730) != 0.41
-    assert _survival_row(committed, "PJM-ALPHA-002", 730) != 0.52
-    # Ranking the product depends on: gas clears faster than wind.
-    gas = _survival_row(committed, "PJM-ALPHA-003", 730)
-    wind = _survival_row(committed, "PJM-ALPHA-004", 730)
-    assert (1 - gas) > (1 - wind)
+    by_pid = {pid: grp for pid, grp in committed.groupby("project_id")}
+    assert set(by_pid["PJM-ALPHA-003"]["basis"]) == {"observed_cod"}
+    # The three active display projects have waited 1,990-2,697 days, longer
+    # than the last COD their fuel cohort observed: no number is shipped.
+    for pid in ("PJM-ALPHA-001", "PJM-ALPHA-002", "PJM-ALPHA-004"):
+        rows = by_pid[pid]
+        assert set(rows["basis"]) == {"flat_tail"}
+        assert rows["survival_prob"].isna().all()
+    assert dict(zip(committed["project_id"], committed["queue_age_days"])) == {
+        "PJM-ALPHA-001": 2697, "PJM-ALPHA-002": 2201,
+        "PJM-ALPHA-003": 2829, "PJM-ALPHA-004": 1990,
+    }
+
+
+def test_withdrawn_project_is_rejected_not_scored():
+    # A withdrawn project has no path to COD; the COD curve must not hand it a
+    # positive COD probability.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    subjects = ba.cohort_to_subjects(cohort.to_dict("records"))
+    withdrawn = dict(
+        ba.DISPLAY_PROJECTS[2], project_id="PJM-GAS-W", queue_date="2025-06-01",
+        actual_cod="", status="withdrawn", withdrawal_date="2026-03-01",
+    )
+    with pytest.raises(ValueError, match="withdrawn"):
+        ba.build_survival_rows(subjects, [withdrawn])
