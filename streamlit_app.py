@@ -206,11 +206,14 @@ st.caption(
     "drive the actual survival engine — `interconnect_alpha.show.score_project` — "
     "with your own inputs. a low survival probability means the project is unlikely "
     "to still be un-energized at 730 days, so its COD probability (the complement) "
-    "is high. pick a committed project to pre-fill, then edit. projects with no "
-    "supported estimate have no survival number to pre-fill and are left out."
+    "is high. pick a committed project to pre-fill, then edit. projects already "
+    "online or with no supported estimate have no curve reading to pre-fill and are "
+    "left out."
 )
 
-projects_by_id = {r["project"]: r for r in rows if r["cod_prob"] is not None}
+projects_by_id = {
+    r["project"]: r for r in rows if r["basis"] == "conditional_km" and r["cod_prob"] is not None
+}
 if projects_by_id:
     preset_id = st.selectbox(
         "start from a committed project",
