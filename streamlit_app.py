@@ -111,7 +111,7 @@ c3.metric(
 c4.metric(
     "no supported estimate",
     f"{totals['unsupported_mw']:,.0f} MW",
-    help="active projects older than the last COD their fuel cohort observed",
+    help="active projects whose fuel curve holds no supported estimate over the 730-day window",
 )
 
 # One interactive control: filter by minimum 730-day COD probability. Rows with
@@ -164,8 +164,8 @@ if scored:
 if unsupported:
     names = ", ".join(f"{r['project']} ({r['age_days']}d in queue)" for r in unsupported)
     st.info(
-        f"**no supported estimate:** {names}. each is older than the last COD its fuel "
-        "cohort observed; past that age the Kaplan-Meier curve is flat for lack of events."
+        f"**no supported estimate:** {names}. for each, the fuel's Kaplan-Meier curve holds no COD in the 730-day window to condition on "
+        "(past the cohort's last COD, or on a flat stretch), or only CODs that exhaust the risk set."
     )
 
 c = calib.get(HORIZON)

@@ -280,8 +280,8 @@ def render(root: Path | None = None) -> str:
         lines.append("")
         lines.append(f"no supported estimate: {names}.")
         lines.append(
-            "each is older than the last COD its fuel cohort observed; past that age the "
-            "Kaplan-Meier curve is flat for lack of events."
+            "for each, the fuel's Kaplan-Meier curve holds no COD in the 730-day window to condition on "
+            "(past the cohort's last COD, or on a flat stretch), or only CODs that exhaust the risk set."
         )
 
     lines.append("")

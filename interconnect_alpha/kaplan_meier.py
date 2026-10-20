@@ -94,6 +94,31 @@ class KMCurve:
         last = self.last_event_time
         return last is not None and age < last
 
+    def supports_window(self, age: float, horizon: float) -> bool:
+        """True when the fit can back ``S(age+horizon)/S(age)`` with a real band.
+
+        Beyond ``supports_conditional(age)`` this asks two things of the window
+        ``(age, age+horizon]`` itself. It must hold at least one event: a stretch
+        with none is flat for lack of data, wherever it falls on the curve, and
+        would read survival 1. And the Greenwood band over it must have positive
+        width: a window whose events exhaust the risk set (``n_risk == n_event``,
+        often a single subject) reads survival 0 with a 0-0 band, which is false
+        certainty, not evidence.
+        """
+        if not self.supports_conditional(age):
+            return False
+        if not any(age < p.time <= age + horizon for p in self.points):
+            return False
+        s_cond, lo, hi = self._conditional(age, horizon)
+        return hi > lo
+
+    def _conditional(self, age: float, horizon: float) -> tuple[float, float, float]:
+        s_age = self.survival_at(age)  # > 0: an event after age means S has not hit 0
+        s_cond = self.survival_at(age + horizon) / s_age
+        g_cond = max(0.0, self.greenwood_at(age + horizon) - self.greenwood_at(age))
+        lo, hi = _linear_band(s_cond, g_cond, self.z)
+        return (s_cond, lo, hi)
+
     def conditional_survival(self, age: float, horizon: float) -> tuple[float, float, float]:
         """Conditional survival S(age+horizon)/S(age) with a Greenwood band.
 
@@ -103,17 +128,14 @@ class KMCurve:
         which is the standard left-truncated conditional-KM result. Returned as
         ``(survival, ci_low, ci_high)``.
 
-        Past the flat-tail limit (no event after ``age``; see
-        ``supports_conditional``) the data say nothing, so all three values are
-        NaN rather than a number the fit cannot back.
+        Where the fit cannot back the window (no event after ``age``, no event
+        inside the window, or a zero-width band; see ``supports_window``) the
+        data say nothing, so all three values are NaN rather than a number the
+        fit cannot back.
         """
-        if not self.supports_conditional(age):
+        if not self.supports_window(age, horizon):
             return (math.nan, math.nan, math.nan)
-        s_age = self.survival_at(age)  # > 0: an event after age means S has not hit 0
-        s_cond = self.survival_at(age + horizon) / s_age
-        g_cond = max(0.0, self.greenwood_at(age + horizon) - self.greenwood_at(age))
-        lo, hi = _linear_band(s_cond, g_cond, self.z)
-        return (s_cond, lo, hi)
+        return self._conditional(age, horizon)
 
 
 def _linear_band(survival: float, greenwood_sum: float, z: float) -> tuple[float, float]:

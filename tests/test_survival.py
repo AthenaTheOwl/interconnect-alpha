@@ -211,11 +211,11 @@ def test_survival_rows_move_when_the_cohort_moves():
         Subject(200.0, 1, "gas"), Subject(900.0, 0, "gas"),
         Subject(600.0, 1, "solar"), Subject(900.0, 0, "solar"),
         Subject(900.0, 1, "battery"), Subject(900.0, 0, "battery"),
-        Subject(1500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
+        Subject(500.0, 1, "wind"), Subject(1200.0, 0, "wind"),
     ]
     moved = base + [Subject(300.0, 1, "gas") for _ in range(6)]
     # Score every display project as active and 31 days into the queue at the
-    # as-of date, so each row reads its fuel curve inside the observed range.
+    # as-of date, so the gas and wind rows read a 730-day window holding a COD.
     projects = [
         dict(p, queue_date="2026-07-01", actual_cod="", status="active")
         for p in ba.DISPLAY_PROJECTS
@@ -283,6 +283,29 @@ def test_project_past_the_last_observed_cod_gets_no_estimate():
     basis, age, surv, lo, hi = ba.project_estimate(project, curve, 730)
     assert (basis, age) == ("flat_tail", 2001)
     assert all(math.isnan(v) for v in (surv, lo, hi))
+
+
+def test_flat_stretch_or_zero_width_band_gets_no_estimate():
+    # The committed gas curve has CODs up to day 729, then a single one at day
+    # 2766 with one subject at risk. A gas project aged 1,000-2,035 days has no
+    # COD in its 730-day window (the curve is flat there for lack of data); one
+    # aged 2,036-2,765 days rests on that lone subject, survival 0 with a 0-0
+    # band. Neither is a supported estimate.
+    cohort = pd.read_parquet(ROOT / "data/pjm_queue_cohort_2018_2023.parquet")
+    curve = ba.fit_fuel_curves(ba.cohort_to_subjects(cohort.to_dict("records")))["gas"]
+    for age in (1000, 1500, 2000, 2036, 2500, 2765):
+        assert curve.supports_conditional(age)
+        assert not curve.supports_window(age, 730)
+        assert all(math.isnan(v) for v in curve.conditional_survival(age, 730))
+    assert curve.supports_window(600, 730)
+    gas = dict(ba.DISPLAY_PROJECTS[2], actual_cod="", status="active")
+    for queue_date in ("2022-06-01", "2019-12-01"):  # ages 1,522 and 2,435
+        rows = ba.build_survival_rows(
+            ba.cohort_to_subjects(cohort.to_dict("records")),
+            [dict(gas, project_id="PJM-GAS-X", queue_date=queue_date)],
+        )
+        assert set(rows["basis"]) == {"flat_tail"}
+        assert rows["survival_prob"].isna().all()
 
 
 def test_committed_rows_condition_on_time_waited():

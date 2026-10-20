@@ -53,8 +53,13 @@ point. The six columns above are still present.
 
 - `basis`: `observed_cod` (COD on or before `as_of`; survival 0, no band),
   `conditional_km` (active; the fuel curve conditional on days already in the
-  queue), or `flat_tail` (active and older than the last COD its fuel cohort
-  observed; survival and band are null, because the curve has no events there).
+  queue), or `flat_tail` (active, and the fuel curve cannot back the window
+  `(queue_age_days, queue_age_days + days_to_event]`: the project is older than
+  the last COD its fuel cohort observed, or the window holds no COD, or its CODs
+  exhaust the risk set and would leave a 0-0 band; survival and band are null).
+  The basis is set per row, so a project can be `conditional_km` at one horizon
+  and `flat_tail` at another. No minimum at-risk count is enforced beyond this;
+  a thin risk set shows as a wide Greenwood band.
 - `queue_age_days`: days from queue entry to `as_of`.
 - `days_to_event` counts days after `as_of`. For `conditional_km` rows
   `survival_prob` is `S(queue_age_days + days_to_event) / S(queue_age_days)`.

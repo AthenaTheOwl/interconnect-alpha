@@ -14,8 +14,9 @@ Pipeline:
    Kaplan-Meier has enough events and censoring to fit.
 2. Fit a right-censored Kaplan-Meier curve per fuel. Score each display project at
    the as-of date: built if it already reached COD, else the curve conditional on
-   days already in the queue (Greenwood band), or no estimate past the last COD its
-   fuel cohort observed -> ``data/survival_distributions.parquet``.
+   days already in the queue (Greenwood band), or no estimate where the curve cannot
+   back the window (past the last COD its fuel cohort observed, no COD in the
+   window, or a 0-0 band) -> ``data/survival_distributions.parquet``.
 3. Backtest the per-fuel COD forecast against the naive base rate (in-sample) ->
    ``data/calibration_metrics.json``.
 4. Rewrite the monthly report (``reports/2026-08-pjm-survival.md`` + ``.jsonl``) and
@@ -188,14 +189,16 @@ def project_estimate(project: dict, curve, horizon: int) -> tuple[str, int, floa
     - ``conditional_km``: still active, and its fuel cohort holds a COD after this
       age. Survival is ``S(age + horizon) / S(age)`` with the Greenwood band over
       ``(age, age + horizon]``.
-    - ``flat_tail``: still active but older than the last COD its fuel cohort
-      observed. The curve is flat there for lack of events, so there is no
-      estimate: survival and band are NaN.
+    - ``flat_tail``: still active, but the fuel curve cannot back the window
+      ``(age, age + horizon]``: the project is older than the last COD its fuel
+      cohort observed, or the window holds no COD (the curve is flat there for
+      lack of events), or its CODs exhaust the risk set and leave a 0-0 band.
+      There is no estimate: survival and band are NaN.
     """
     age = _days(_iso(AS_OF), project["queue_date"])
     if project["actual_cod"] and date.fromisoformat(project["actual_cod"]) <= AS_OF:
         return ("observed_cod", age, 0.0, 0.0, 0.0)
-    if not curve.supports_conditional(age):
+    if not curve.supports_window(age, horizon):
         return ("flat_tail", age, math.nan, math.nan, math.nan)
     surv, lo, hi = curve.conditional_survival(age, horizon)
     return ("conditional_km", age, surv, lo, hi)
@@ -374,8 +377,8 @@ def write_report(
     lines.append(f"- Training cohort: {len(cohort_rows)} projects across four fuels, 2018-2023 queue entries (synthetic fixture).")
     lines.append(
         f"- Display projects: {sum(mws.values()):.0f} nameplate MW. {online_mw:.0f} MW already online; "
-        f"{scored_txt}; {flat_mw:.0f} MW sit in active projects past their fuel cohort's last "
-        f"observed COD, with no estimate."
+        f"{scored_txt}; {flat_mw:.0f} MW sit in active projects their fuel curve cannot score "
+        f"(basis `flat_tail`), with no estimate."
     )
     lines.append("- Median RTO capacity-price case for 2028: $268.00/MW-day, with p10-p90 range $205.00-$346.00/MW-day.")
     lines.append(
@@ -390,7 +393,9 @@ def write_report(
         "probability is `1 - survival_prob`. A project that reached COD by the as-of date counts "
         "as built (basis `observed_cod`): probability 1, no band, no curve. An active project "
         "older than the last COD its fuel cohort observed sits on the flat tail of the curve, "
-        "where there are no events to condition on (basis `flat_tail`): no estimate.\n"
+        "where there are no events to condition on (basis `flat_tail`): no estimate. The same "
+        "holds when the window `(age, age + h]` holds no COD, or holds only CODs that exhaust "
+        "the risk set and leave a 0-0 band.\n"
     )
     lines.append(
         "| project_id | PJM zone | fuel | days in queue | basis | "

@@ -7,13 +7,13 @@ Canonical scenario: `base-case`
 ## Summary
 
 - Training cohort: 76 projects across four fuels, 2018-2023 queue entries (synthetic fixture).
-- Display projects: 570 nameplate MW. 220 MW already online; no active project has a supported estimate; 350 MW sit in active projects past their fuel cohort's last observed COD, with no estimate.
+- Display projects: 570 nameplate MW. 220 MW already online; no active project has a supported estimate; 350 MW sit in active projects their fuel curve cannot score (basis `flat_tail`), with no estimate.
 - Median RTO capacity-price case for 2028: $268.00/MW-day, with p10-p90 range $205.00-$346.00/MW-day.
 - Calibration gate (in-sample): 730-day Brier score 0.141, naive baseline 0.239.
 
 ## Project Survival
 
-Each active project reads its fuel's Kaplan-Meier curve conditional on the days it has already spent in the queue at the as-of date: `S(age + h) / S(age)`, with the Greenwood band over `(age, age + h]`. The horizon `h` counts days after the as-of date. COD probability is `1 - survival_prob`. A project that reached COD by the as-of date counts as built (basis `observed_cod`): probability 1, no band, no curve. An active project older than the last COD its fuel cohort observed sits on the flat tail of the curve, where there are no events to condition on (basis `flat_tail`): no estimate.
+Each active project reads its fuel's Kaplan-Meier curve conditional on the days it has already spent in the queue at the as-of date: `S(age + h) / S(age)`, with the Greenwood band over `(age, age + h]`. The horizon `h` counts days after the as-of date. COD probability is `1 - survival_prob`. A project that reached COD by the as-of date counts as built (basis `observed_cod`): probability 1, no band, no curve. An active project older than the last COD its fuel cohort observed sits on the flat tail of the curve, where there are no events to condition on (basis `flat_tail`): no estimate. The same holds when the window `(age, age + h]` holds no COD, or holds only CODs that exhaust the risk set and leave a 0-0 band.
 
 | project_id | PJM zone | fuel | days in queue | basis | 730-day COD probability | 95% interval |
 | --- | --- | --- | ---: | --- | ---: | ---: |

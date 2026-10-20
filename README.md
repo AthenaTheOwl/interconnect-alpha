@@ -53,7 +53,7 @@ PJM-ALPHA-002  RTO    battery     80M        n/a flat tail    active
 PJM-ALPHA-004  COMED  wind       150M        n/a flat tail    active
 
 no supported estimate: PJM-ALPHA-001 (2697d in queue), PJM-ALPHA-002 (2201d in queue), PJM-ALPHA-004 (1990d in queue).
-each is older than the last COD its fuel cohort observed; past that age the Kaplan-Meier curve is flat for lack of events.
+for each, the fuel's Kaplan-Meier curve holds no COD in the 730-day window to condition on (past the cohort's last COD, or on a flat stretch), or only CODs that exhaust the risk set.
 
 capacity-price fan (RTO, $/MW-day):
   2027: p10 $190  p50 $244  p90 $315
@@ -71,7 +71,8 @@ fit, where `age` is its days in the queue, and the interval is the Greenwood ban
 over that window. When no project of that fuel reached COD after `age` days, the
 curve is flat from there on and the ratio would read 1 for lack of data; `show`
 prints `n/a` and keeps those megawatts out of both the expected and the phantom
-totals. In the committed fixture that is every active project: the cohort's last
+totals. It does the same when the window holds no COD (a flat stretch mid-curve) or
+holds only CODs that exhaust the risk set, which would read 0 with a 0-0 band. In the committed fixture that is every active project: the cohort's last
 solar, battery and wind CODs land at 1,332, 1,391 and 1,551 days (the fuel-curve
 table in `reports/2026-08-pjm-survival.md`). The Brier line scores the per-fuel
 curve from queue entry: an in-sample 0.141 against a naive base-rate 0.239 means
